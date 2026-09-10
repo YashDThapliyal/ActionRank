@@ -69,7 +69,9 @@ def _eval_top1(model: ActionRankModel, examples: Sequence[Example], catalog: Cat
 
 
 def _train_epoch(model: ActionRankModel, optimizer, examples: Sequence[Example], catalog: Catalog, cfg: Config,
-                 generator: torch.Generator) -> float:
+                 generator: torch.Generator) -> list[float]:
+    """One pass over the examples; returns the loss of every micro-batch (an optimizer step happens every
+    `grad_accum` micro-batches and after the last one)."""
     t2, losses = cfg.tier2, []
     order = torch.randperm(len(examples), generator=generator).tolist()
     batches = list(_batches([examples[i] for i in order], t2.batch_size))
@@ -84,7 +86,7 @@ def _train_epoch(model: ActionRankModel, optimizer, examples: Sequence[Example],
         if step % t2.grad_accum == 0 or step == len(batches):
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
-    return sum(losses) / max(len(losses), 1)
+    return losses
 
 
 def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None = None) -> Path:
@@ -100,15 +102,20 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     model = ActionRankModel(tokenizer, peft_model, head, cfg.model)
     params = [p for p in peft_model.parameters() if p.requires_grad] + list(head.parameters())
     optimizer = torch.optim.AdamW(params, lr=t2.lr)
-    log.info("trainable fraction of backbone: %.4f; train examples %d", trainable_fraction(peft_model), len(train_ex))
-    history: dict[str, list[float]] = {"train_loss": [], "eval_top1": [_eval_top1(model, eval_ex, ds.catalog, cfg)]}
+    log.info("device %s; trainable fraction of backbone: %.4f; train examples %d",
+             device, trainable_fraction(peft_model), len(train_ex))
+    history: dict[str, list] = {"train_loss": [], "step_losses": [], "optimizer_steps_per_epoch": [],
+                                "eval_top1": [_eval_top1(model, eval_ex, ds.catalog, cfg)]}
     log.info("eval top1 before training: %.4f", history["eval_top1"][0])
     generator = torch.Generator().manual_seed(cfg.data.split_seed)
     started = time.perf_counter()
     for epoch in range(t2.epochs):
-        loss = _train_epoch(model, optimizer, train_ex, ds.catalog, cfg, generator)
+        step_losses = _train_epoch(model, optimizer, train_ex, ds.catalog, cfg, generator)
+        loss = sum(step_losses) / max(len(step_losses), 1)
         top1 = _eval_top1(model, eval_ex, ds.catalog, cfg)
         history["train_loss"].append(loss)
+        history["step_losses"].append(step_losses)
+        history["optimizer_steps_per_epoch"].append(-(-len(step_losses) // t2.grad_accum))
         history["eval_top1"].append(top1)
         log.info("epoch %d loss %.4f eval top1 %.4f", epoch + 1, loss, top1)
     out = Path(t2.checkpoint_dir)
