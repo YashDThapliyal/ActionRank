@@ -138,3 +138,16 @@ def test_encode_tool_descriptions_prompts_each_tool(monkeypatch):
     vectors = model_module.encode_tool_descriptions(None, None, cat, cfg=None, batch_size=2)
     assert vectors.shape == (3, 4)
     assert seen[0] == "Tool: a\nDescription: Alpha" and len(seen) == 3
+
+
+def test_load_head_rejects_checkpoint_from_another_architecture(tmp_path):
+    from model import load_head, save_head
+
+    cat = Catalog((ToolSpec("a", ""), ToolSpec("b", "")))
+    head = ScoringHead(num_tools=2, hidden_dim=4, head_hidden=4, temperature=1.0)
+    save_head(head, tmp_path / "h.pt", cat)
+    saved = torch.load(tmp_path / "h.pt")
+    saved.pop("architecture")
+    torch.save(saved, tmp_path / "old.pt")
+    with pytest.raises(ValueError, match="architecture"):
+        load_head(tmp_path / "old.pt", cat)

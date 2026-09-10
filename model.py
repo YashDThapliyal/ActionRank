@@ -91,6 +91,9 @@ def encode_tool_descriptions(tokenizer, backbone, catalog: Catalog, cfg: ModelCo
     return torch.cat(chunks)
 
 
+HEAD_ARCHITECTURE = "residual-cosine-v1"  # bump whenever ScoringHead.forward changes; old checkpoints are rejected
+
+
 class ScoringHead(nn.Module):
     """score(h, tool) = cos(h + mlp(h), E[tool]) / temperature, masked to candidates.
 
@@ -149,12 +152,16 @@ def save_head(head: ScoringHead, path: Path, catalog: Catalog) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": head.state_dict(), "num_tools": head.tool_embedding.num_embeddings,
                 "hidden_dim": head.tool_embedding.embedding_dim, "head_hidden": head.proj[0].out_features,
-                "temperature": head.temperature, "catalog_sha": catalog_fingerprint(catalog)}, path)
+                "temperature": head.temperature, "catalog_sha": catalog_fingerprint(catalog),
+                "architecture": HEAD_ARCHITECTURE}, path)
 
 
 def load_head(path: Path, catalog: Catalog) -> ScoringHead:
     """Load a saved head and verify it was trained on exactly this catalog (same tools, same order)."""
     saved = torch.load(path, map_location="cpu")
+    if saved.get("architecture") != HEAD_ARCHITECTURE:
+        raise ValueError(f"head at {path} has architecture {saved.get('architecture')!r}, expected "
+                         f"{HEAD_ARCHITECTURE!r}; re-run training")
     if saved.get("catalog_sha") != catalog_fingerprint(catalog):
         raise ValueError(f"head at {path} was trained on a different catalog; re-run training")
     head = ScoringHead(saved["num_tools"], saved["hidden_dim"], saved["head_hidden"], saved["temperature"])

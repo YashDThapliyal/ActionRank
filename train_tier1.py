@@ -201,7 +201,7 @@ def main() -> None:
     results_dir.mkdir(parents=True, exist_ok=True)
     summary = {"history": history, "encode_seconds": encode_seconds, "n_train": len(train_rows),
                "n_validation": len(validation), "n_eval": len(evaluation),
-               "best_validation_top1": max(history["eval_top1"]), "held_out_eval": held_out, "limit": args.limit,
+               "best_validation_top1": history["best_top1"], "held_out_eval": held_out, "limit": args.limit,
                "tool_init": cfg.model.tool_init}
     (results_dir / "tier1_history.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "history"}, indent=1))
