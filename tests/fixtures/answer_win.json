@@ -1,0 +1,194 @@
+{
+ "win": true,
+ "tree": {
+  "size": 9,
+  "max_length": 9,
+  "tree": {
+   "is_terminal": false,
+   "pruned": false,
+   "finished": false,
+   "depth": 0,
+   "node_type": "Action Input",
+   "description": "",
+   "Elo": 1000.0,
+   "child_count": 1,
+   "expand_num": 0,
+   "children": [
+    {
+     "is_terminal": false,
+     "pruned": false,
+     "finished": false,
+     "depth": 1,
+     "node_type": "Action",
+     "description": "get_info_for_covid_19_india",
+     "Elo": 1000.0,
+     "child_count": 1,
+     "expand_num": 0,
+     "children": [
+      {
+       "is_terminal": false,
+       "pruned": false,
+       "finished": false,
+       "depth": 2,
+       "node_type": "Action Input",
+       "description": "{}",
+       "Elo": 1000.0,
+       "observation": "{\"error\": \"\", \"response\": \"{'21/05/2023': [{'info': '756 New Cases Recorded in the last 24 hours', 'text': 'Accessible Version :                                                       View(65 KB)', 'link': 'https://cdnbbsr.s3waas.gov.in/s3850af92f8d9903e7a4e0559a98ecc857/uploads/2023/05/2023052240.pd",
+       "observation_code": 0,
+       "child_count": 1,
+       "expand_num": 1,
+       "children": [
+        {
+         "is_terminal": false,
+         "pruned": false,
+         "finished": false,
+         "depth": 3,
+         "node_type": "Action",
+         "description": "get_details_for_covid_19_india",
+         "Elo": 1000.0,
+         "child_count": 1,
+         "expand_num": 0,
+         "children": [
+          {
+           "is_terminal": false,
+           "pruned": false,
+           "finished": true,
+           "depth": 4,
+           "node_type": "Action Input",
+           "description": "{}",
+           "Elo": 1000.0,
+           "observation": "{\"error\": \"\", \"response\": \"{\\\"Andaman and Nicobar Islands\\\":{\\\"slno\\\":1,\\\"state\\\":\\\"Andaman and Nicobar Islands\\\",\\\"confirm\\\":\\\"10766\\\",\\\"cured\\\":\\\"10637\\\",\\\"death\\\":129,\\\"total\\\":21532},\\\"Andhra Pradesh\\\":{\\\"slno\\\":2,\\\"state\\\":\\\"Andhra Pradesh\\\",\\\"confirm\\\":\\\"2340672\\\",\\\"cured\\\":\\\"2325939\\\",\\\"death",
+           "observation_code": 0,
+           "child_count": 1,
+           "expand_num": 2,
+           "children": [
+            {
+             "is_terminal": false,
+             "pruned": false,
+             "finished": true,
+             "depth": 5,
+             "node_type": "Action",
+             "description": "get_latest_updates_for_covid_19_india",
+             "Elo": 1000.0,
+             "child_count": 1,
+             "expand_num": 0,
+             "children": [
+              {
+               "is_terminal": false,
+               "pruned": false,
+               "finished": true,
+               "depth": 6,
+               "node_type": "Action Input",
+               "description": "{}",
+               "Elo": 1000.0,
+               "observation": "{\"error\": \"\", \"response\": \"{\\\"Developed and hosted by\\\":\\\"National Informatics Centre\\\",\\\"21/05/2023\\\":[{\\\"info\\\":\\\"756 New Cases Recorded in the last 24 hours\\\"}],\\\"20/05/2023\\\":[{\\\"info\\\":\\\"782 New Cases Recorded in the last 24 hours\\\"}],\\\"19/05/2023\\\":[{\\\"info\\\":\\\"865 New Cases Recorded in the la",
+               "observation_code": 0,
+               "child_count": 1,
+               "expand_num": 3,
+               "children": [
+                {
+                 "is_terminal": false,
+                 "pruned": false,
+                 "finished": true,
+                 "depth": 7,
+                 "node_type": "Action",
+                 "description": "Finish",
+                 "Elo": 1000.0,
+                 "child_count": 1,
+                 "expand_num": 0,
+                 "children": [
+                  {
+                   "is_terminal": false,
+                   "pruned": false,
+                   "finished": true,
+                   "depth": 8,
+                   "node_type": "Action Input",
+                   "description": "{\n  \"return_type\": \"give_answer\",\n  \"final_answer\": \"The latest COVID-19 information for India is as follows:\\n\\n- Andaman and Nicobar Islands: Total cases: 21,532, Confirmed: 10,766, Recovered: 10,637, Deaths: 129\\n- Andhra Pradesh: Total cases: 4,681,344, Confirmed: 2,340,672, Recovered: 2,325,939, Deaths: 14,733\\n- Arunachal Pradesh: Total cases: 134,083, Confirmed: 67,042, Recovered: 66,745, Deaths: 296\\n- Assam: Total cases: 1,492,257, Confirmed: 746,138, Recovered: 738,084, Deaths: 8,035\\n- Bihar: Total cases: 1,710,506, Confirmed: 855,258, Recovered: 842,934, Deaths: 12,314\\n- Chandigarh: Total cases: 201,374, Confirmed: 100,687, Recovered: 99,502, Deaths: 1,185\\n- Chhattisgarh: Total cases: 2,375,354, Confirmed: 1,187,679, Recovered: 1,173,485, Deaths: 14,190\\n...\\n\"\n}",
+                   "Elo": 1000.0,
+                   "observation": "{\"response\":\"successfully giving the final answer.\"}",
+                   "observation_code": 3,
+                   "child_count": 0,
+                   "expand_num": 4,
+                   "children": []
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "answer_generation": {
+  "valid_data": true,
+  "query_count": 4,
+  "final_answer": "{\n  \"return_type\": \"give_answer\",\n  \"final_answer\": \"The latest COVID-19 information for India is as follows:\\n\\n- Andaman and Nicobar Islands: Total cases: 21,532, Confirmed: 10,766, Recovered: 10,63",
+  "function": [
+   {
+    "name": "get_info_for_covid_19_india",
+    "description": "This is the subfunction for tool \"covid_19_india\", you can use this tool.The description of this function is: \"Get Covid Latest Information\"",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "optional": []
+    }
+   },
+   {
+    "name": "get_details_for_covid_19_india",
+    "description": "This is the subfunction for tool \"covid_19_india\", you can use this tool.The description of this function is: \"Coronavirus India Live Updates (State)\"",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "optional": []
+    }
+   },
+   {
+    "name": "get_latest_updates_for_covid_19_india",
+    "description": "This is the subfunction for tool \"covid_19_india\", you can use this tool.The description of this function is: \"Coronavirus India Live Guidelines, Bills, etc\"",
+    "parameters": {
+     "type": "object",
+     "properties": {},
+     "required": [],
+     "optional": []
+    }
+   },
+   {
+    "name": "Finish",
+    "description": "If you think you get the result which can answer the task, call this function to give the final answer. Or, if you think you can't handle the task from this status, call this function to restart. Remember: you should ALWAYS call this function at the end of your try, and the final answer is the ONLY part that will be showed to user, so final answer should contain enough information.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "return_type": {
+       "type": "string",
+       "enum": [
+        "give_answer",
+        "give_up_and_restart"
+       ]
+      },
+      "final_answer": {
+       "type": "string",
+       "description": "The final answer you want to give the user. You should have this field if \"return_type\"==\"give_answer\""
+      }
+     },
+     "required": [
+      "return_type"
+     ]
+    }
+   }
+  ],
+  "chain": [],
+  "query": "My family is planning a vacation in India and we want to ensure our safety during the pandemic. Can you provide the latest COVID-19 information for India? It should include the details for each state, such as the number of confirmed cases, recoveries, deaths, and the total number of cases.",
+  "finish_type": "give_answer"
+ }
+}
