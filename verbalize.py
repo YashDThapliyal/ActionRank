@@ -68,3 +68,21 @@ def build_baseline_messages(example: Example, catalog: Catalog, cfg: VerbalizeCo
         {"role": "system", "content": BASELINE_SYSTEM},
         {"role": "user", "content": _body(example, catalog, cfg) + "\nWhich tool should be called next?"},
     ]
+
+
+def build_prompt_with_spans(example: Example, catalog: Catalog,
+                            cfg: VerbalizeConfig) -> tuple[str, tuple[tuple[int, int], ...]]:
+    """Same prompt as build_prompt plus the [start, end) character span of each candidate's catalog line.
+
+    Spans are returned in candidate order and never include the trailing newline.
+    """
+    prompt = build_prompt(example, catalog, cfg)
+    cursor = prompt.rindex(render_catalog(example.candidates, catalog, cfg))
+    spans: list[tuple[int, int]] = []
+    for name in example.candidates:
+        start = prompt.index(f"- {name}: ", cursor)
+        newline = prompt.find("\n", start)
+        end = len(prompt) if newline < 0 else newline
+        spans.append((start, end))
+        cursor = end
+    return prompt, tuple(spans)

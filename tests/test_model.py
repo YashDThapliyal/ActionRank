@@ -151,3 +151,56 @@ def test_load_head_rejects_checkpoint_from_another_architecture(tmp_path):
     torch.save(saved, tmp_path / "old.pt")
     with pytest.raises(ValueError, match="architecture"):
         load_head(tmp_path / "old.pt", cat)
+
+
+def test_span_token_mask_marks_overlapping_tokens_only():
+    from model import span_token_mask
+
+    offsets = torch.tensor([[0, 3], [3, 6], [6, 9], [9, 12], [12, 12]])  # last is padding
+    mask = span_token_mask(offsets, ((0, 6), (7, 11)))
+    assert mask.tolist() == [[True, True, False, False, False], [False, False, True, True, False]]
+
+
+def test_span_token_mask_raises_on_zero_token_span():
+    from model import span_token_mask
+
+    offsets = torch.tensor([[0, 3], [3, 6]])
+    with pytest.raises(ValueError, match="zero tokens"):
+        span_token_mask(offsets, ((0, 3), (6, 9)))
+
+
+def test_pool_spans_means_over_masked_tokens():
+    from model import pool_spans
+
+    hidden = torch.tensor([[1.0, 0.0], [3.0, 0.0], [10.0, 5.0]])
+    mask = torch.tensor([[True, True, False], [False, False, True]])
+    assert torch.allclose(pool_spans(hidden, mask), torch.tensor([[2.0, 0.0], [10.0, 5.0]]))
+
+
+def test_span_head_scatters_to_catalog_width_and_starts_as_cosine():
+    from model import SpanScoringHead
+
+    head = SpanScoringHead(hidden_dim=4, head_hidden=8, temperature=0.5)
+    q = torch.randn(2, 4)
+    tools = torch.randn(2, 3, 4)
+    tool_mask = torch.tensor([[True, True, False], [True, True, True]])
+    tool_idx = torch.tensor([[5, 1, 0], [2, 7, 3]])
+    logits = head(q, tools, tool_mask, tool_idx, num_tools=8)
+    assert logits.shape == (2, 8)
+    assert torch.isfinite(logits[0]).tolist() == [False, True, False, False, False, True, False, False]
+    assert torch.isfinite(logits[1]).tolist() == [False, False, True, True, False, False, False, True]
+    cos = torch.nn.functional.cosine_similarity(q[0], tools[0, 1], dim=0) / 0.5
+    assert torch.allclose(logits[0, 1], cos, atol=1e-5)
+
+
+def test_span_head_roundtrip_checks_architecture_and_catalog(tmp_path):
+    from model import SpanScoringHead, load_span_head, save_span_head
+
+    cat = Catalog((ToolSpec("a", ""), ToolSpec("b", "")))
+    head = SpanScoringHead(hidden_dim=4, head_hidden=8, temperature=0.5)
+    save_span_head(head, tmp_path / "s.pt", cat)
+    assert isinstance(load_span_head(tmp_path / "s.pt", cat), SpanScoringHead)
+    with pytest.raises(ValueError, match="architecture"):
+        from model import load_head
+
+        load_head(tmp_path / "s.pt", cat)

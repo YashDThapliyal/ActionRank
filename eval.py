@@ -17,8 +17,7 @@ from tqdm import tqdm
 
 from config import Config, load_config
 from data import FINISH, Catalog, Example, load_dataset
-from model import ActionRankModel, build_candidate_mask, load_backbone, load_head, synchronize
-from verbalize import build_prompt
+from model import ActionRankModel, SpanActionRankModel, load_backbone, load_head, load_span_head, synchronize
 
 log = logging.getLogger(__name__)
 TOPK = 5
@@ -86,9 +85,7 @@ def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], cat
     def decide(ex: Example) -> tuple[tuple[int, ...], float]:
         synchronize(model.device)
         started = time.perf_counter()
-        prompt = build_prompt(ex, catalog, cfg.verbalize)
-        mask = build_candidate_mask([ex], catalog).to(model.device)
-        ranked = model.rank([prompt], mask, TOPK)[0]
+        ranked = model.rank_example(ex, catalog, TOPK, cfg.verbalize)  # builds prompt (+spans, mask) inside the timer
         synchronize(model.device)
         return ranked, time.perf_counter() - started
 
@@ -162,15 +159,19 @@ def _load_tier1(cfg: Config, catalog: Catalog, tokenizer, backbone) -> ActionRan
     return ActionRankModel(tokenizer, backbone, load_head(Path(cfg.tier1.checkpoint), catalog), cfg.model)
 
 
+def _load_span(cfg: Config, catalog: Catalog, tokenizer, backbone) -> SpanActionRankModel:
+    return SpanActionRankModel(tokenizer, backbone, load_span_head(Path(cfg.tier1.span_checkpoint), catalog), cfg.model, catalog)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate ActionRank systems and the generation baseline")
-    parser.add_argument("--systems", default="tier1,baseline", help="comma list of: tier1, tier2, baseline")
+    parser.add_argument("--systems", default="tier1,span,baseline", help="comma list of: tier1, span, tier2, baseline")
     parser.add_argument("--limit", type=int, default=None, help="override eval.max_eval_examples")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config()
     systems = [s.strip() for s in args.systems.split(",") if s.strip()]
-    unknown = set(systems) - {"tier1", "tier2", "baseline"}
+    unknown = set(systems) - {"tier1", "span", "tier2", "baseline"}
     if unknown:
         raise SystemExit(f"unknown systems: {sorted(unknown)}")
     ds = load_dataset(cfg)
@@ -182,6 +183,9 @@ def main() -> None:
     warm = cfg.eval.latency_warmup
     if "tier1" in systems:
         metrics, predictions["tier1"] = evaluate_actionrank(_load_tier1(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier1", warm)
+        rows.append(metrics)
+    if "span" in systems:
+        metrics, predictions["span"] = evaluate_actionrank(_load_span(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-span", warm)
         rows.append(metrics)
     if "baseline" in systems:
         metrics, predictions["baseline"] = evaluate_baseline(evaluation, ds.catalog, cfg, tokenizer, backbone, warm)

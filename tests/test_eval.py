@@ -87,8 +87,8 @@ def test_evaluate_actionrank_caps_warmup_to_available_examples():
         def eval(self):
             return self
 
-        def rank(self, prompts, mask, k):
-            return [(0,)]
+        def rank_example(self, example, catalog, k, verbalize_cfg=None):
+            return (0,)
 
     cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
     ex = [Example("1", "q", (), ("a", "Finish"), "a")]
@@ -109,8 +109,8 @@ def test_evaluate_actionrank_records_per_example_predictions():
         def eval(self):
             return self
 
-        def rank(self, prompts, mask, k):
-            return [(1, 0)]
+        def rank_example(self, example, catalog, k, verbalize_cfg=None):
+            return (1, 0)
 
     cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
     ex = [Example("1", "q", (), ("a", "Finish"), "a")]
@@ -129,3 +129,25 @@ def test_write_results_removes_stale_prediction_files(tmp_path):
     write_results([m], tmp_path, predictions={"tier1": [{"query_id": "1"}]})
     assert (tmp_path / "predictions_tier1.jsonl").exists()
     assert not stale.exists()
+
+
+def test_evaluate_actionrank_uses_rank_example_contract():
+    import torch
+
+    from config import load_config
+    from data import Catalog, ToolSpec
+    from eval import evaluate_actionrank
+
+    class FakeModel:
+        device = torch.device("cpu")
+
+        def eval(self):
+            return self
+
+        def rank_example(self, example, catalog, k, verbalize_cfg=None):
+            return (catalog.index(example.candidates[-1]),)
+
+    cat = Catalog((ToolSpec("a", "A"), ToolSpec("b", "B"), ToolSpec("Finish", "F")))
+    ex = [Example("1", "q", (), ("b", "Finish"), "Finish")]
+    m, preds = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake")
+    assert m.top1 == 1.0 and preds[0]["top1"] == "Finish"

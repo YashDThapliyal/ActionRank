@@ -54,3 +54,16 @@ def test_baseline_messages_shape():
     assert [m["role"] for m in msgs] == ["system", "user"]
     assert "a_tool" in msgs[1]["content"] and "Task: Find alpha" in msgs[1]["content"]
     assert "exactly one tool name" in msgs[0]["content"]
+
+
+def test_prompt_with_spans_matches_prompt_and_locates_each_candidate_line():
+    from verbalize import build_prompt_with_spans
+
+    ex = Example("1", "Find alpha", steps(1), ("b_tool", "a_tool", "Finish"), "a_tool")
+    prompt, spans = build_prompt_with_spans(ex, CAT, CFG)
+    assert prompt == build_prompt(ex, CAT, CFG)
+    assert len(spans) == 3
+    for name, (start, end) in zip(ex.candidates, spans):
+        assert prompt[start:end].startswith(f"- {name}: ")
+        assert "\n" not in prompt[start:end]
+    assert spans[0][1] <= spans[1][0] <= spans[2][0]

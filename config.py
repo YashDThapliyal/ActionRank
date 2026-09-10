@@ -42,6 +42,7 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class Tier1Config:
+    head: str  # table | span
     cache_dir: str
     cache_batch_size: int
     epochs: int
@@ -49,6 +50,7 @@ class Tier1Config:
     lr: float
     weight_decay: float
     checkpoint: str
+    span_checkpoint: str
 
 
 @dataclass(frozen=True)

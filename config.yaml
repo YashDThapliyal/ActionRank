@@ -22,6 +22,7 @@ model:
   score_temperature: 0.05
   tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
 tier1:
+  head: span              # table = learned per-tool table; span = pool each candidate's line in the prompt
   cache_dir: cache
   cache_batch_size: 16
   epochs: 60
@@ -29,6 +30,7 @@ tier1:
   lr: 0.001
   weight_decay: 0.01
   checkpoint: checkpoints/tier1_head.pt
+  span_checkpoint: checkpoints/tier1_span_head.pt
 tier2:
   lora_rank: 8
   lora_alpha: 16

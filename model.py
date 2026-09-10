@@ -131,6 +131,153 @@ class ScoringHead(nn.Module):
         return logits.masked_fill(~candidate_mask.to(logits.device), float("-inf"))
 
 
+# --------------------------------------------------------------------------- span pooling
+
+SPAN_HEAD_ARCHITECTURE = "span-cosine-v1"
+
+
+def span_token_mask(offsets: Tensor, spans: Sequence[tuple[int, int]]) -> Tensor:
+    """[K, T] bool: token t belongs to span k when their character ranges overlap.
+
+    Raises if any span covers zero tokens (e.g. the candidate line was truncated away): a zero-token span
+    must never be silently scored.
+    """
+    span_t = torch.as_tensor(list(spans), dtype=offsets.dtype, device=offsets.device)
+    starts, ends = offsets[:, 0].unsqueeze(0), offsets[:, 1].unsqueeze(0)
+    mask = (starts < span_t[:, 1:2]) & (ends > span_t[:, 0:1])
+    empty = (mask.sum(dim=1) == 0).nonzero().flatten().tolist()
+    if empty:
+        raise ValueError(f"candidate span(s) {empty} cover zero tokens; prompt was truncated past the catalog")
+    return mask
+
+
+def pool_spans(hidden: Tensor, token_mask: Tensor) -> Tensor:
+    """Mean of hidden[T, D] over each row of token_mask[K, T] -> [K, D] float32."""
+    weights = token_mask.to(hidden.device, torch.float32)
+    return (weights @ hidden.to(torch.float32)) / weights.sum(dim=1, keepdim=True).clamp(min=1.0)
+
+
+def encode_with_spans(tokenizer, backbone, prompts: Sequence[str], spans: Sequence[Sequence[tuple[int, int]]],
+                      cfg: ModelConfig, grad: bool = False, pool_on_cpu: bool = True) -> tuple[Tensor, list[Tensor]]:
+    """One prefill per batch; returns the pooled query vectors [B, D] and, per example, its candidate
+    span vectors [K_i, D]. Span pooling runs on CPU from a single copy of the hidden states unless
+    gradients are needed (on MPS the dozen tiny ops it takes cost more than the copy)."""
+    device = next(backbone.parameters()).device
+    tokenizer.padding_side = "right"
+    tokenizer.truncation_side = "left"
+    batch = tokenizer(list(prompts), return_tensors="pt", padding=True, truncation=True,
+                      max_length=cfg.max_prompt_tokens, return_offsets_mapping=True)
+    offsets = batch.pop("offset_mapping")
+    inputs = {k: v.to(device) for k, v in batch.items()}
+    with torch.set_grad_enabled(grad):
+        hidden = backbone.get_decoder()(input_ids=inputs["input_ids"], attention_mask=inputs["attention_mask"]).last_hidden_state
+    query = pool_hidden(hidden, inputs["attention_mask"], cfg.pooling)
+    source = hidden.detach().to(torch.float32).cpu() if (pool_on_cpu and not grad) else hidden
+    tools = [pool_spans(source[i], span_token_mask(offsets[i], spans[i])) for i in range(len(prompts))]
+    return query, tools
+
+
+class SpanScoringHead(nn.Module):
+    """score(q, tool_k) = cos(q + mlp(q), t_k + mlp'(t_k)) / temperature for the K candidate spans of a prompt,
+    scattered into catalog-width logits (-inf everywhere else). Both projections are residual with
+    zero-initialised output layers, so an untrained head is plain cosine similarity."""
+
+    def __init__(self, hidden_dim: int, head_hidden: int, temperature: float) -> None:
+        super().__init__()
+        if temperature <= 0:
+            raise ValueError("temperature must be positive")
+        self.proj = nn.Sequential(nn.Linear(hidden_dim, head_hidden), nn.GELU(), nn.Linear(head_hidden, hidden_dim))
+        self.tool_proj = nn.Sequential(nn.Linear(hidden_dim, head_hidden), nn.GELU(), nn.Linear(head_hidden, hidden_dim))
+        for block in (self.proj, self.tool_proj):
+            nn.init.zeros_(block[2].weight)
+            nn.init.zeros_(block[2].bias)
+        self.temperature = temperature
+        self.hidden_dim = hidden_dim
+        self.head_hidden = head_hidden
+
+    def forward(self, q: Tensor, tools: Tensor, tool_mask: Tensor, tool_idx: Tensor, num_tools: int) -> Tensor:
+        q32, t32 = q.to(torch.float32), tools.to(torch.float32)
+        qn = nn.functional.normalize(q32 + self.proj(q32), dim=-1)
+        tn = nn.functional.normalize(t32 + self.tool_proj(t32), dim=-1)
+        scores = torch.einsum("bd,bkd->bk", qn, tn) / self.temperature
+        scores = scores.masked_fill(~tool_mask.to(scores.device), float("-inf"))
+        logits = torch.full((q.shape[0], num_tools), float("-inf"), device=scores.device)
+        # amax so a padded slot (idx 0, score -inf) can never clobber a real candidate at the same index
+        return logits.scatter_reduce(1, tool_idx.to(scores.device), scores, reduce="amax", include_self=True)
+
+
+def save_span_head(head: SpanScoringHead, path: Path, catalog: Catalog) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"state_dict": head.state_dict(), "hidden_dim": head.hidden_dim, "head_hidden": head.head_hidden,
+                "temperature": head.temperature, "catalog_sha": catalog_fingerprint(catalog),
+                "architecture": SPAN_HEAD_ARCHITECTURE}, path)
+
+
+def load_span_head(path: Path, catalog: Catalog) -> SpanScoringHead:
+    saved = torch.load(path, map_location="cpu")
+    if saved.get("architecture") != SPAN_HEAD_ARCHITECTURE:
+        raise ValueError(f"head at {path} has architecture {saved.get('architecture')!r}, expected "
+                         f"{SPAN_HEAD_ARCHITECTURE!r}; re-run training")
+    if saved.get("catalog_sha") != catalog_fingerprint(catalog):
+        raise ValueError(f"head at {path} was trained on a different catalog; re-run training")
+    head = SpanScoringHead(saved["hidden_dim"], saved["head_hidden"], saved["temperature"])
+    head.load_state_dict(saved["state_dict"])
+    return head.eval()
+
+
+def pad_tool_vectors(tools: Sequence[Tensor], examples: Sequence[Example], catalog: Catalog,
+                     width: int | None = None) -> tuple[Tensor, Tensor, Tensor]:
+    """Pad per-example [K_i, D] span vectors to [B, K, D] with a bool mask and catalog indices."""
+    width = width or max(t.shape[0] for t in tools)
+    dim = tools[0].shape[1]
+    padded = torch.zeros(len(tools), width, dim, dtype=torch.float32)
+    mask = torch.zeros(len(tools), width, dtype=torch.bool)
+    idx = torch.zeros(len(tools), width, dtype=torch.long)
+    for row, (vecs, ex) in enumerate(zip(tools, examples)):
+        k = vecs.shape[0]
+        padded[row, :k] = vecs.to(torch.float32).cpu()
+        mask[row, :k] = True
+        idx[row, :k] = torch.tensor([catalog.index(c) for c in ex.candidates])
+    return padded, mask, idx
+
+
+class SpanActionRankModel(nn.Module):
+    """Backbone + SpanScoringHead: candidates are scored from their own lines inside the prompt."""
+
+    span_pool_device = "cpu"
+
+    def __init__(self, tokenizer, backbone, head: SpanScoringHead, cfg: ModelConfig, catalog: Catalog) -> None:
+        super().__init__()
+        self.tokenizer = tokenizer
+        self.backbone = backbone
+        self.head = head.to(next(backbone.parameters()).device)
+        self.cfg = cfg
+        self.catalog = catalog
+
+    @property
+    def device(self) -> torch.device:
+        return next(self.backbone.parameters()).device
+
+    def forward(self, examples: Sequence[Example], verbalize_cfg, grad: bool = False) -> Tensor:
+        from verbalize import build_prompt_with_spans
+
+        rendered = [build_prompt_with_spans(ex, self.catalog, verbalize_cfg) for ex in examples]
+        q, tools = encode_with_spans(self.tokenizer, self.backbone, [r[0] for r in rendered], [r[1] for r in rendered],
+                                     self.cfg, grad=grad, pool_on_cpu=not grad)
+        padded, mask, idx = pad_tool_vectors(tools, examples, self.catalog)
+        return self.head(q.to(self.head.proj[0].weight.device), padded.to(q.device), mask, idx, len(self.catalog))
+
+    @torch.no_grad()
+    def rank_example(self, example: Example, catalog: Catalog, k: int, verbalize_cfg=None) -> tuple[int, ...]:
+        if verbalize_cfg is None:
+            from config import load_config
+
+            verbalize_cfg = load_config().verbalize
+        logits = self.forward([example], verbalize_cfg)
+        logits = logits.masked_fill(~build_candidate_mask([example], catalog).to(logits.device), float("-inf"))
+        return ActionRankModel.rank_logits(logits, k)[0]
+
+
 def build_candidate_mask(examples: Sequence[Example], catalog: Catalog) -> Tensor:
     mask = torch.zeros(len(examples), len(catalog), dtype=torch.bool)
     for row, ex in enumerate(examples):
@@ -198,3 +345,15 @@ class ActionRankModel(nn.Module):
     @torch.no_grad()
     def rank(self, prompts: Sequence[str], candidate_mask: Tensor | None, k: int) -> list[tuple[int, ...]]:
         return self.rank_logits(self.forward(prompts, candidate_mask), k)
+
+    @torch.no_grad()
+    def rank_example(self, example: Example, catalog: Catalog, k: int, verbalize_cfg=None) -> tuple[int, ...]:
+        """Catalog indices of the top-k candidates for one example (prompt built here)."""
+        from verbalize import build_prompt
+
+        if verbalize_cfg is None:
+            from config import load_config
+
+            verbalize_cfg = load_config().verbalize
+        prompt = build_prompt(example, catalog, verbalize_cfg)
+        return self.rank([prompt], build_candidate_mask([example], catalog).to(self.device), k)[0]
