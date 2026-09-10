@@ -40,8 +40,12 @@ Use `--limit N` on any script for a smoke run.
 - `verbalize.py` — task query, last 3 steps in full (args/observations truncated), older steps
   collapsed to their tool names, then the candidate catalog as `name: description` lines.
 - `model.py` — backbone loader, prefill-only encoder (no LM head), pooling, `ScoringHead`
-  (tool embedding table + MLP projection, cosine scores with temperature, candidate mask).
-- `train_tier1.py` — frozen backbone, cached vectors, head-only training.
+  (tool embedding table + residual MLP projection, cosine scores with temperature, candidate mask).
+  The tool table is initialised from the backbone's own encoding of each tool's `name: description`
+  (`model.tool_init: text`), so tools that never occur as a training label still get a meaningful vector.
+- `train_tier1.py` — frozen backbone, cached vectors (fingerprinted against prompts + config), head-only
+  training; the checkpoint epoch is chosen on a 10% validation slice of *training* trajectories, never
+  on the held-out eval split.
 - `train_tier2.py` — LoRA (q/v projections) fine-tuned jointly with the head.
 - `baseline.py` — same backbone, chat-prompted to emit a tool name (greedy for top-1 + latency,
   beam-5 for top-5); a hallucination is a top-1 name outside the task's candidate list.
