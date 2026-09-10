@@ -1,6 +1,7 @@
 """Backbone encoder (prefill only), pooling, and catalog-aware scoring head."""
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Sequence
@@ -115,15 +116,23 @@ def labels_tensor(examples: Sequence[Example], catalog: Catalog) -> Tensor:
     return torch.tensor([catalog.index(ex.label) for ex in examples], dtype=torch.long)
 
 
-def save_head(head: ScoringHead, path: Path) -> None:
+def catalog_fingerprint(catalog: Catalog) -> str:
+    """Stable hash of the catalog's tool order, so a head is only used with the catalog it was trained on."""
+    return hashlib.sha256("\n".join(catalog.names).encode()).hexdigest()
+
+
+def save_head(head: ScoringHead, path: Path, catalog: Catalog) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"state_dict": head.state_dict(), "num_tools": head.tool_embedding.num_embeddings,
                 "hidden_dim": head.tool_embedding.embedding_dim, "head_hidden": head.proj[0].out_features,
-                "temperature": head.temperature}, path)
+                "temperature": head.temperature, "catalog_sha": catalog_fingerprint(catalog)}, path)
 
 
-def load_head(path: Path) -> ScoringHead:
+def load_head(path: Path, catalog: Catalog) -> ScoringHead:
+    """Load a saved head and verify it was trained on exactly this catalog (same tools, same order)."""
     saved = torch.load(path, map_location="cpu")
+    if saved.get("catalog_sha") != catalog_fingerprint(catalog):
+        raise ValueError(f"head at {path} was trained on a different catalog; re-run training")
     head = ScoringHead(saved["num_tools"], saved["hidden_dim"], saved["head_hidden"], saved["temperature"])
     head.load_state_dict(saved["state_dict"])
     return head.eval()

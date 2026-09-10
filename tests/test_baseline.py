@@ -32,3 +32,25 @@ def test_dedupe_keep_order():
 def test_normalize_splits_comma_joined_names():
     assert normalize_tool_name("daily_live_for_x,holidays_for_x") == "daily_live_for_x"
     assert normalize_tool_name("a_tool; b_tool") == "a_tool"
+
+
+def test_predict_latency_includes_prompt_building_and_tokenization(monkeypatch):
+    import time
+
+    import torch
+
+    import baseline
+    from config import load_config
+    from data import Catalog, Example, ToolSpec
+
+    def slow_inputs(tokenizer, messages, device, max_tokens):
+        time.sleep(0.05)
+        return {"input_ids": torch.zeros(1, 1, dtype=torch.long)}
+
+    monkeypatch.setattr(baseline, "_chat_inputs", slow_inputs)
+    monkeypatch.setattr(baseline, "generate_top1", lambda tok, m, inputs, cfg: "a_tool")
+    monkeypatch.setattr(baseline, "generate_topk", lambda tok, m, inputs, cfg: ("a_tool", "b_tool"))
+    cat = Catalog((ToolSpec("a_tool", "A"), ToolSpec("b_tool", "B")))
+    pred = baseline.predict_one(None, torch.nn.Linear(1, 1), Example("1", "q", (), ("a_tool", "b_tool"), "a_tool"), cat, load_config())
+    assert pred.latency_s >= 0.05
+    assert pred.top1 == "a_tool" and pred.topk == ("a_tool", "b_tool")

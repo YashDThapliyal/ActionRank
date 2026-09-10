@@ -62,3 +62,35 @@ def test_reference_rows_random_and_frequent():
     assert frequent.top1 == 0.5  # predicts 'a' for ex4 (hit), 'Finish' for ex5 (miss: 'a' not a candidate)
     assert frequent.hallucination_rate == 0.0
     assert rows[0].hallucination_rate == 0.0
+
+
+def test_top5_counts_top1_hit_even_if_absent_from_topk_list():
+    m = compute_metrics("s", ["a"], ["a"], [("b", "c")], [True], None)
+    assert m.top1 == 1.0 and m.top5 == 1.0
+
+
+def test_top5_uses_at_most_five_entries():
+    m = compute_metrics("s", ["z"], ["a"], [("b", "c", "d", "e", "f", "z")], [True], None)
+    assert m.top5 == 0.0
+
+
+def test_evaluate_actionrank_caps_warmup_to_available_examples():
+    import torch
+
+    from config import load_config
+    from data import Catalog, ToolSpec
+    from eval import evaluate_actionrank
+
+    class FakeModel:
+        device = torch.device("cpu")
+
+        def eval(self):
+            return self
+
+        def rank(self, prompts, mask, k):
+            return [(0,)]
+
+    cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
+    ex = [Example("1", "q", (), ("a", "Finish"), "a")]
+    m = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake", warmup=3)
+    assert m.n == 1 and m.top1 == 1.0

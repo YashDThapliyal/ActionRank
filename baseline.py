@@ -59,15 +59,11 @@ def _decode_new(tokenizer, sequences: torch.Tensor, prompt_len: int) -> list[str
 
 
 @torch.no_grad()
-def generate_top1(tokenizer, model, inputs: dict[str, torch.Tensor], cfg: Config) -> tuple[str, float]:
-    """Greedy decode; returns (raw text, wall-clock seconds incl. prefill + decode)."""
-    device = inputs["input_ids"].device
-    synchronize(device)
-    started = time.perf_counter()
+def generate_top1(tokenizer, model, inputs: dict[str, torch.Tensor], cfg: Config) -> str:
+    """Greedy decode of the tool name (prefill + autoregressive decode)."""
     out = model.generate(**inputs, max_new_tokens=cfg.baseline.max_new_tokens, do_sample=False,
                          num_beams=1, pad_token_id=tokenizer.pad_token_id)
-    synchronize(device)
-    return _decode_new(tokenizer, out, inputs["input_ids"].shape[1])[0], time.perf_counter() - started
+    return _decode_new(tokenizer, out, inputs["input_ids"].shape[1])[0]
 
 
 @torch.no_grad()
@@ -81,12 +77,18 @@ def generate_topk(tokenizer, model, inputs: dict[str, torch.Tensor], cfg: Config
 
 
 def predict_one(tokenizer, model, example: Example, catalog: Catalog, cfg: Config) -> BaselinePrediction:
+    """One decision. Latency covers prompt building, tokenization, prefill and greedy decode (same span as
+    ActionRank's timing); the beam-search top-k pass is not timed."""
     device = next(model.parameters()).device
+    synchronize(device)
+    started = time.perf_counter()
     inputs = _chat_inputs(tokenizer, build_baseline_messages(example, catalog, cfg.verbalize), device,
                           cfg.model.max_prompt_tokens)
-    raw, latency = generate_top1(tokenizer, model, inputs, cfg)
+    raw = generate_top1(tokenizer, model, inputs, cfg)
+    synchronize(device)
+    latency = time.perf_counter() - started
     top1 = normalize_tool_name(raw)
-    topk = dedupe_keep_order((top1, *generate_topk(tokenizer, model, inputs, cfg))) if cfg.baseline.num_beams > 1 else (top1,)
+    topk = generate_topk(tokenizer, model, inputs, cfg) if cfg.baseline.num_beams > 1 else (top1,)
     return BaselinePrediction(top1=top1, topk=topk, latency_s=latency, in_candidates=top1 in example.candidates,
                               in_catalog=top1 in catalog, raw=raw)
 

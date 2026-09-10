@@ -95,3 +95,15 @@ def test_actionrank_model_moves_head_to_backbone_device():
     head = ScoringHead(num_tools=3, hidden_dim=4, head_hidden=4, temperature=1.0)  # on cpu
     model = ActionRankModel(None, backbone, head, None)
     assert next(model.head.parameters()).device.type == "mps"
+
+
+def test_load_head_rejects_mismatched_catalog(tmp_path):
+    from model import load_head, save_head
+
+    cat = Catalog((ToolSpec("a", ""), ToolSpec("b", "")))
+    other = Catalog((ToolSpec("b", ""), ToolSpec("a", "")))
+    head = ScoringHead(num_tools=2, hidden_dim=4, head_hidden=4, temperature=1.0)
+    save_head(head, tmp_path / "h.pt", cat)
+    assert load_head(tmp_path / "h.pt", cat).tool_embedding.num_embeddings == 2
+    with pytest.raises(ValueError, match="catalog"):
+        load_head(tmp_path / "h.pt", other)

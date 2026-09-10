@@ -48,11 +48,12 @@ def compute_metrics(name: str, labels: Sequence[str], top1: Sequence[str], topk:
     if lengths != {n}:
         raise ValueError(f"length mismatch: labels={n} top1={len(top1)} topk={len(topk)} valid={len(valid)}")
     top1_hits = [p == y for p, y in zip(top1, labels)]
+    top5_hits = [hit or (y in ks[:TOPK]) for hit, ks, y in zip(top1_hits, topk, labels)]
     no_finish = [hit for hit, y in zip(top1_hits, labels) if y != finish_name]
     ms = [1000.0 * s for s in latencies_s] if latencies_s is not None else None
     return Metrics(
         name=name, n=n, top1=_rate(top1_hits),
-        top5=_rate([y in ks[:TOPK] for ks, y in zip(topk, labels)]),
+        top5=_rate(top5_hits),
         hallucination_rate=_rate([not ok for ok in valid]),
         latency_mean_ms=statistics.fmean(ms) if ms else None,
         latency_p50_ms=statistics.median(ms) if ms else None,
@@ -67,17 +68,20 @@ def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], cat
     model.eval()
     names = catalog.names
     top1, topk, valid, latencies = [], [], [], []
-    for ex in tqdm(list(examples[:warmup]) + list(examples), desc=name, leave=False):
+
+    def decide(ex: Example) -> tuple[tuple[int, ...], float]:
         synchronize(model.device)
         started = time.perf_counter()
         prompt = build_prompt(ex, catalog, cfg.verbalize)
         mask = build_candidate_mask([ex], catalog).to(model.device)
         ranked = model.rank([prompt], mask, TOPK)[0]
         synchronize(model.device)
-        elapsed = time.perf_counter() - started
-        if warmup > 0:
-            warmup -= 1
-            continue
+        return ranked, time.perf_counter() - started
+
+    for ex in examples[:max(warmup, 0)]:
+        decide(ex)
+    for ex in tqdm(examples, desc=name, leave=False):
+        ranked, elapsed = decide(ex)
         picks = tuple(names[i] for i in ranked)
         if not picks:
             raise RuntimeError(f"no candidate received a finite score for example {ex.query_id}")
@@ -133,9 +137,8 @@ def write_results(rows: Sequence[Metrics], results_dir: Path, note: str = "") ->
     return md
 
 
-def _load_tier1(cfg: Config, tokenizer, backbone) -> ActionRankModel:
-    head = load_head(Path(cfg.tier1.checkpoint)).to(next(backbone.parameters()).device)
-    return ActionRankModel(tokenizer, backbone, head, cfg.model)
+def _load_tier1(cfg: Config, catalog: Catalog, tokenizer, backbone) -> ActionRankModel:
+    return ActionRankModel(tokenizer, backbone, load_head(Path(cfg.tier1.checkpoint), catalog), cfg.model)
 
 
 def main() -> None:
@@ -156,13 +159,13 @@ def main() -> None:
     tokenizer, backbone = load_backbone(cfg.model)
     warm = cfg.eval.latency_warmup
     if "tier1" in systems:
-        rows.append(evaluate_actionrank(_load_tier1(cfg, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier1", warm))
+        rows.append(evaluate_actionrank(_load_tier1(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier1", warm))
     if "baseline" in systems:
         rows.append(evaluate_baseline(evaluation, ds.catalog, cfg, tokenizer, backbone, warm))
-    if "tier2" in systems:
+    if "tier2" in systems:  # last: injecting the LoRA adapter mutates the shared backbone in place
         from train_tier2 import load_tier2
 
-        rows.append(evaluate_actionrank(load_tier2(cfg, ds.catalog), evaluation, ds.catalog, cfg, "actionrank-tier2", warm))
+        rows.append(evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier2", warm))
     note = (f"Eval subset: first {len(evaluation)} of {len(ds.eval)} held-out step examples "
             f"({cfg.data.eval_fraction:.0%} of trajectories). Catalog size {len(ds.catalog)}. "
             f"Backbone {cfg.model.backbone} ({cfg.model.dtype}) on {cfg.model.device}.")

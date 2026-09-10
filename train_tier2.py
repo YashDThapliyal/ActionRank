@@ -38,15 +38,19 @@ def trainable_fraction(model) -> float:
     return trainable / total if total else 0.0
 
 
-def _init_head(cfg: Config, num_tools: int, hidden_dim: int) -> ScoringHead:
+def _init_head(cfg: Config, catalog: Catalog, hidden_dim: int) -> ScoringHead:
     path = Path(cfg.tier1.checkpoint)
     if path.exists():
-        head = load_head(path)
-        if head.tool_embedding.num_embeddings == num_tools and head.tool_embedding.embedding_dim == hidden_dim:
-            log.info("initialising head from %s", path)
-            return head
-        log.warning("tier 1 head at %s has a different shape; training head from scratch", path)
-    return ScoringHead(num_tools, hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
+        try:
+            head = load_head(path, catalog)
+        except ValueError as err:
+            log.warning("%s; training head from scratch", err)
+        else:
+            if head.tool_embedding.embedding_dim == hidden_dim:
+                log.info("initialising head from %s", path)
+                return head
+            log.warning("tier 1 head at %s has a different hidden size; training head from scratch", path)
+    return ScoringHead(len(catalog), hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
 
 
 def _batches(items: Sequence, size: int):
@@ -92,7 +96,7 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     peft_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     peft_model.enable_input_require_grads()
     device = next(peft_model.parameters()).device
-    head = _init_head(cfg, len(ds.catalog), backbone.config.hidden_size).to(device)
+    head = _init_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
     model = ActionRankModel(tokenizer, peft_model, head, cfg.model)
     params = [p for p in peft_model.parameters() if p.requires_grad] + list(head.parameters())
     optimizer = torch.optim.AdamW(params, lr=t2.lr)
@@ -110,7 +114,7 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     out = Path(t2.checkpoint_dir)
     out.mkdir(parents=True, exist_ok=True)
     peft_model.save_pretrained(str(out / "adapter"))
-    save_head(head.cpu(), out / "head.pt")
+    save_head(head.cpu(), out / "head.pt", ds.catalog)
     (out / "history.json").write_text(json.dumps({"history": history, "n_train": len(train_ex), "n_eval_subset": len(eval_ex),
                                                   "train_seconds": time.perf_counter() - started}, indent=1))
     return out
@@ -123,10 +127,7 @@ def load_tier2(cfg: Config, catalog: Catalog, tokenizer=None, backbone=None) -> 
     if tokenizer is None or backbone is None:
         tokenizer, backbone = load_backbone(cfg.model)
     peft_model = PeftModel.from_pretrained(backbone, str(out / "adapter")).eval()
-    head = load_head(out / "head.pt")
-    if head.tool_embedding.num_embeddings != len(catalog):
-        raise ValueError("tier 2 head does not match the current catalog size")
-    return ActionRankModel(tokenizer, peft_model, head.to(next(peft_model.parameters()).device), cfg.model)
+    return ActionRankModel(tokenizer, peft_model, load_head(out / "head.pt", catalog), cfg.model)
 
 
 def main() -> None:

@@ -60,3 +60,36 @@ def test_cache_split_writes_and_reloads(tmp_path, monkeypatch):
     # existing cache is reused without re-encoding
     again = cache_split(examples, cat, None, None, cfg, path, batch_size=2)
     assert calls == [2, 2, 1] and torch.equal(again.h, split.h)
+
+
+def test_split_cached_by_query_id_is_disjoint_and_deterministic():
+    from train_tier1 import split_cached
+
+    qids = tuple(str(i // 3) for i in range(30))  # 10 trajectories x 3 steps
+    split = CachedSplit(h=torch.arange(30, dtype=torch.float32).unsqueeze(1), labels=torch.zeros(30, dtype=torch.long),
+                        candidate_mask=torch.ones(30, 1, dtype=torch.bool), query_ids=qids)
+    train, val = split_cached(split, fraction=0.2, seed=1)
+    assert len(train) + len(val) == 30 and len(val) == 6
+    assert not set(train.query_ids) & set(val.query_ids)
+    assert torch.equal(split_cached(split, 0.2, 1)[1].h, val.h)
+
+
+def test_cache_is_reencoded_when_prompt_inputs_change(tmp_path, monkeypatch):
+    import dataclasses
+    import train_tier1
+
+    cat = Catalog((ToolSpec("a", "Alpha tool description"), ToolSpec("Finish", "Finish the task")))
+    examples = tuple(Example(str(i), "q", (), ("a", "Finish"), "a") for i in range(3))
+    calls = []
+    monkeypatch.setattr(train_tier1, "encode_prompts", lambda tok, m, prompts, cfg, grad=False: (calls.append(1), torch.zeros(len(prompts), 2))[1])
+    cfg = load_config(ROOT / "config.yaml")
+    path = tmp_path / "c.pt"
+    cache_split(examples, cat, None, None, cfg, path, batch_size=8)
+    cache_split(examples, cat, None, None, cfg, path, batch_size=8)
+    assert len(calls) == 1
+    changed = dataclasses.replace(cfg, verbalize=dataclasses.replace(cfg.verbalize, description_chars=3))
+    cache_split(examples, cat, None, None, changed, path, batch_size=8)
+    assert len(calls) == 2
+    other_catalog = Catalog((ToolSpec("a", "A-different"), ToolSpec("Finish", "F")))
+    cache_split(examples, other_catalog, None, None, changed, path, batch_size=8)
+    assert len(calls) == 3

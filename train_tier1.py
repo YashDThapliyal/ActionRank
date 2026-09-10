@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import logging
 import time
@@ -16,6 +17,7 @@ from tqdm import tqdm
 
 from config import Config, load_config
 from data import Catalog, Example, load_dataset
+from model import catalog_fingerprint
 from model import (ScoringHead, build_candidate_mask, encode_prompts, labels_tensor, load_backbone,
                    resolve_device, save_head)
 from verbalize import build_prompt
@@ -45,28 +47,58 @@ def _batches(items: Sequence, size: int):
         yield items[start:start + size]
 
 
+def cache_fingerprint(prompts: Sequence[str], examples: Sequence[Example], catalog: Catalog, cfg: Config) -> str:
+    """Hash of everything that determines the cached vectors: model settings, prompts, labels, candidates."""
+    digest = hashlib.sha256()
+    m = cfg.model
+    digest.update(f"{m.backbone}|{m.dtype}|{m.pooling}|{m.max_prompt_tokens}|{catalog_fingerprint(catalog)}".encode())
+    for prompt, ex in zip(prompts, examples):
+        digest.update(prompt.encode())
+        digest.update(f"\x00{ex.label}\x00{'|'.join(ex.candidates)}\x01".encode())
+    return digest.hexdigest()
+
+
+def _cached_matches(path: Path, fingerprint: str) -> bool:
+    saved = torch.load(path, map_location="cpu")
+    return saved.get("fingerprint") == fingerprint
+
+
 def cache_split(examples: Sequence[Example], catalog: Catalog, tokenizer, backbone, cfg: Config,
                 path: Path, batch_size: int | None = None, refresh: bool = False) -> CachedSplit:
     """Encode every example's prompt with the frozen backbone and cache the pooled vectors."""
+    prompts = [build_prompt(ex, catalog, cfg.verbalize) for ex in examples]
+    fingerprint = cache_fingerprint(prompts, examples, catalog, cfg)
     if path.exists() and not refresh:
-        cached = load_cached(path)
-        if cached.query_ids == tuple(ex.query_id for ex in examples) and len(cached) == len(examples):
-            log.info("reusing cache %s (%d rows)", path, len(cached))
-            return cached
-        log.warning("cache %s does not match the current examples; re-encoding", path)
+        if _cached_matches(path, fingerprint):
+            log.info("reusing cache %s (%d rows)", path, len(examples))
+            return load_cached(path)
+        log.warning("cache %s does not match the current inputs/config; re-encoding", path)
     size = batch_size or cfg.tier1.cache_batch_size
     chunks: list[Tensor] = []
-    for batch in tqdm(list(_batches(list(examples), size)), desc=f"encode {path.stem}", leave=False):
-        prompts = [build_prompt(ex, catalog, cfg.verbalize) for ex in batch]
-        chunks.append(encode_prompts(tokenizer, backbone, prompts, cfg.model).detach().cpu())
+    for batch in tqdm(list(_batches(prompts, size)), desc=f"encode {path.stem}", leave=False):
+        chunks.append(encode_prompts(tokenizer, backbone, batch, cfg.model).detach().cpu())
     split = CachedSplit(h=torch.cat(chunks) if chunks else torch.empty(0, 0),
                         labels=labels_tensor(examples, catalog),
                         candidate_mask=build_candidate_mask(examples, catalog),
                         query_ids=tuple(ex.query_id for ex in examples))
     path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({"h": split.h, "labels": split.labels, "candidate_mask": split.candidate_mask,
-                "query_ids": list(split.query_ids)}, path)
+                "query_ids": list(split.query_ids), "fingerprint": fingerprint}, path)
     return split
+
+
+def _select(split: CachedSplit, rows: Tensor) -> CachedSplit:
+    return CachedSplit(h=split.h[rows], labels=split.labels[rows], candidate_mask=split.candidate_mask[rows],
+                       query_ids=tuple(split.query_ids[int(i)] for i in rows))
+
+
+def split_cached(split: CachedSplit, fraction: float, seed: int) -> tuple[CachedSplit, CachedSplit]:
+    """Hold out `fraction` of the *trajectories* (query ids) of a cached split for validation."""
+    qids = sorted(set(split.query_ids))
+    order = torch.randperm(len(qids), generator=torch.Generator().manual_seed(seed)).tolist()
+    held = {qids[i] for i in order[:round(len(qids) * fraction)]}
+    is_val = torch.tensor([q in held for q in split.query_ids], dtype=torch.bool)
+    return _select(split, (~is_val).nonzero().flatten()), _select(split, is_val.nonzero().flatten())
 
 
 def topk_accuracy(logits: Tensor, labels: Tensor, k: int) -> float:
@@ -83,9 +115,13 @@ def evaluate_head(head: ScoringHead, split: CachedSplit, device: torch.device, b
     return {"top1": topk_accuracy(logits, split.labels, 1), "top5": topk_accuracy(logits, split.labels, 5)}
 
 
-def train_head(train: CachedSplit, evaluation: CachedSplit, cfg: Config, num_tools: int,
+def train_head(train: CachedSplit, validation: CachedSplit, cfg: Config, num_tools: int,
                hidden_dim: int) -> tuple[ScoringHead, dict[str, list[float]]]:
-    """AdamW on the head only; cross-entropy over candidate-masked catalog logits."""
+    """AdamW on the head only; cross-entropy over candidate-masked catalog logits.
+
+    The returned head is the epoch with the best top-1 on `validation`, which must be carved out of the
+    training trajectories (never the held-out eval split).
+    """
     t1, device = cfg.tier1, resolve_device(cfg.model.device)
     head = ScoringHead(num_tools, hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature).to(device)
     optimizer = torch.optim.AdamW(head.parameters(), lr=t1.lr, weight_decay=t1.weight_decay)
@@ -102,7 +138,7 @@ def train_head(train: CachedSplit, evaluation: CachedSplit, cfg: Config, num_too
             loss.backward()
             optimizer.step()
             losses.append(loss.item())
-        scores = evaluate_head(head, evaluation, device, t1.batch_size)
+        scores = evaluate_head(head, validation, device, t1.batch_size)
         history["train_loss"].append(sum(losses) / max(len(losses), 1))
         history["eval_top1"].append(scores["top1"])
         history["eval_top5"].append(scores["top5"])
@@ -122,6 +158,7 @@ def main() -> None:
     cfg = load_config()
     ds = load_dataset(cfg)
     train_ex, eval_ex = ds.train[:args.limit], ds.eval[:args.limit]
+    validation_fraction = 0.1
     tokenizer, backbone = load_backbone(cfg.model)
     cache_dir = Path(cfg.tier1.cache_dir)
     suffix = f"_{args.limit}" if args.limit else ""
@@ -129,12 +166,15 @@ def main() -> None:
     train = cache_split(train_ex, ds.catalog, tokenizer, backbone, cfg, cache_dir / f"train{suffix}.pt", refresh=args.refresh)
     evaluation = cache_split(eval_ex, ds.catalog, tokenizer, backbone, cfg, cache_dir / f"eval{suffix}.pt", refresh=args.refresh)
     encode_seconds = time.perf_counter() - started
-    head, history = train_head(train, evaluation, cfg, len(ds.catalog), int(train.h.shape[1]))
-    save_head(head, Path(cfg.tier1.checkpoint))
+    train_rows, validation = split_cached(train, validation_fraction, cfg.data.split_seed)
+    head, history = train_head(train_rows, validation, cfg, len(ds.catalog), int(train.h.shape[1]))
+    save_head(head, Path(cfg.tier1.checkpoint), ds.catalog)
+    held_out = evaluate_head(head.to(resolve_device(cfg.model.device)), evaluation, resolve_device(cfg.model.device), cfg.tier1.batch_size)
     results_dir = Path(cfg.eval.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
-    summary = {"history": history, "encode_seconds": encode_seconds, "n_train": len(train), "n_eval": len(evaluation),
-               "best_eval_top1": max(history["eval_top1"]), "limit": args.limit}
+    summary = {"history": history, "encode_seconds": encode_seconds, "n_train": len(train_rows),
+               "n_validation": len(validation), "n_eval": len(evaluation),
+               "best_validation_top1": max(history["eval_top1"]), "held_out_eval": held_out, "limit": args.limit}
     (results_dir / "tier1_history.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "history"}, indent=1))
 
