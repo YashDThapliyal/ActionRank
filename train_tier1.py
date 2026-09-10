@@ -216,7 +216,7 @@ def cache_span_split(examples: Sequence[Example], catalog: Catalog, tokenizer, b
         rows = [examples[i] for i in batch]
         q, tools = encode_with_spans(tokenizer, backbone, [rendered[i][0] for i in batch], [rendered[i][1] for i in batch], cfg.model)
         padded, mask, idx = pad_tool_vectors(tools, rows, catalog, width)
-        q_chunks.append(q.detach().cpu()); tool_chunks.append(padded.half()); mask_chunks.append(mask); idx_chunks.append(idx)
+        q_chunks.append(q.detach().cpu()); tool_chunks.append(padded.detach().cpu().half()); mask_chunks.append(mask); idx_chunks.append(idx)
         if progress is not None:
             progress(batch[-1] + 1, time.perf_counter() - started)
     split = CachedSpanSplit(q=torch.cat(q_chunks) if q_chunks else torch.empty(0, 0),

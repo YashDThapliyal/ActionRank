@@ -56,6 +56,7 @@ class Tier1Config:
 
 @dataclass(frozen=True)
 class Tier2Config:
+    head: str  # table | span
     lora_rank: int
     lora_alpha: int
     lora_dropout: float

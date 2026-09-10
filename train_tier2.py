@@ -13,8 +13,10 @@ from tqdm import tqdm
 
 from config import Config, Tier2Config, load_config
 from data import Catalog, Dataset, Example, load_dataset
-from model import (ActionRankModel, ScoringHead, build_candidate_mask, encode_prompts, labels_tensor,
-                   load_backbone, load_head, save_head)
+from model import (ActionRankModel, ScoringHead, SpanActionRankModel, SpanScoringHead, build_candidate_mask,
+                   encode_prompts, labels_tensor, load_backbone, load_head, load_span_head, save_head, save_span_head)
+from torch import Tensor
+
 from train_tier1 import topk_accuracy
 from verbalize import build_prompt
 
@@ -53,6 +55,35 @@ def _init_head(cfg: Config, catalog: Catalog, hidden_dim: int) -> ScoringHead:
     return ScoringHead(len(catalog), hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
 
 
+def _init_span_head(cfg: Config, catalog: Catalog, hidden_dim: int) -> SpanScoringHead:
+    path = Path(cfg.tier1.span_checkpoint)
+    if path.exists():
+        try:
+            head = load_span_head(path, catalog)
+        except ValueError as err:
+            log.warning("%s; training span head from scratch", err)
+        else:
+            if head.hidden_dim == hidden_dim:
+                log.info("initialising span head from %s", path)
+                return head
+    return SpanScoringHead(hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
+
+
+def tier2_logits(model, batch: Sequence[Example], catalog: Catalog, cfg: Config, grad: bool) -> Tensor:
+    """Catalog-width logits for a batch from either model type (table head or span head)."""
+    mask = build_candidate_mask(batch, catalog)
+    if isinstance(model, SpanActionRankModel):
+        logits = model(batch, cfg.verbalize, grad=grad)
+        return logits.masked_fill(~mask.to(logits.device), float("-inf"))
+    prompts = [build_prompt(ex, catalog, cfg.verbalize) for ex in batch]
+    return model(prompts, mask.to(model.device), grad=grad)
+
+
+def tier2_head_kind(checkpoint_dir: Path) -> str:
+    meta = checkpoint_dir / "meta.json"
+    return json.loads(meta.read_text()).get("head", "table") if meta.exists() else "table"
+
+
 def _batches(items: Sequence, size: int):
     for start in range(0, len(items), size):
         yield items[start:start + size]
@@ -63,8 +94,7 @@ def _eval_top1(model: ActionRankModel, examples: Sequence[Example], catalog: Cat
     model.eval()
     logits, labels = [], labels_tensor(examples, catalog)
     for batch in _batches(list(examples), cfg.tier1.cache_batch_size):
-        prompts = [build_prompt(ex, catalog, cfg.verbalize) for ex in batch]
-        logits.append(model(prompts, build_candidate_mask(batch, catalog).to(model.device)).cpu())
+        logits.append(tier2_logits(model, batch, catalog, cfg, grad=False).cpu())
     return topk_accuracy(torch.cat(logits), labels, 1)
 
 
@@ -78,9 +108,8 @@ def _train_epoch(model: ActionRankModel, optimizer, examples: Sequence[Example],
     model.train()
     optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(tqdm(batches, desc="tier2 train", leave=False), start=1):
-        prompts = [build_prompt(ex, catalog, cfg.verbalize) for ex in batch]
-        logits = model(prompts, build_candidate_mask(batch, catalog).to(model.device), grad=True)
-        loss = torch.nn.functional.cross_entropy(logits, labels_tensor(batch, catalog).to(model.device))
+        logits = tier2_logits(model, batch, catalog, cfg, grad=True)
+        loss = torch.nn.functional.cross_entropy(logits, labels_tensor(batch, catalog).to(logits.device))
         (loss / t2.grad_accum).backward()
         losses.append(loss.item())
         if step % t2.grad_accum == 0 or step == len(batches):
@@ -98,8 +127,14 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     peft_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     peft_model.enable_input_require_grads()
     device = next(peft_model.parameters()).device
-    head = _init_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
-    model = ActionRankModel(tokenizer, peft_model, head, cfg.model)
+    if t2.head == "span":
+        head = _init_span_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
+        model = SpanActionRankModel(tokenizer, peft_model, head, cfg.model, ds.catalog)
+    elif t2.head == "table":
+        head = _init_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
+        model = ActionRankModel(tokenizer, peft_model, head, cfg.model)
+    else:
+        raise ValueError(f"tier2.head must be 'table' or 'span', got {t2.head!r}")
     params = [p for p in peft_model.parameters() if p.requires_grad] + list(head.parameters())
     optimizer = torch.optim.AdamW(params, lr=t2.lr)
     log.info("device %s; trainable fraction of backbone: %.4f; train examples %d",
@@ -121,7 +156,11 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     out = Path(t2.checkpoint_dir)
     out.mkdir(parents=True, exist_ok=True)
     peft_model.save_pretrained(str(out / "adapter"))
-    save_head(head.cpu(), out / "head.pt", ds.catalog)
+    if t2.head == "span":
+        save_span_head(head.cpu(), out / "head.pt", ds.catalog)
+    else:
+        save_head(head.cpu(), out / "head.pt", ds.catalog)
+    (out / "meta.json").write_text(json.dumps({"head": t2.head, "pooling": cfg.model.pooling}))
     (out / "history.json").write_text(json.dumps({"history": history, "n_train": len(train_ex), "n_eval_subset": len(eval_ex),
                                                   "train_seconds": time.perf_counter() - started}, indent=1))
     return out
@@ -134,6 +173,8 @@ def load_tier2(cfg: Config, catalog: Catalog, tokenizer=None, backbone=None) -> 
     if tokenizer is None or backbone is None:
         tokenizer, backbone = load_backbone(cfg.model)
     peft_model = PeftModel.from_pretrained(backbone, str(out / "adapter")).eval()
+    if tier2_head_kind(out) == "span":
+        return SpanActionRankModel(tokenizer, peft_model, load_span_head(out / "head.pt", catalog), cfg.model, catalog)
     return ActionRankModel(tokenizer, peft_model, load_head(out / "head.pt", catalog), cfg.model)
 
 

@@ -198,9 +198,10 @@ def main() -> None:
         rows.append(metrics)
         del sft_model
     if "tier2" in systems:  # last: injecting the LoRA adapter mutates the shared backbone in place
-        from train_tier2 import load_tier2
+        from train_tier2 import load_tier2, tier2_head_kind
 
-        metrics, predictions["tier2"] = evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier2", warm)
+        name = "actionrank-tier2" + ("-span" if tier2_head_kind(Path(cfg.tier2.checkpoint_dir)) == "span" else "")
+        metrics, predictions["tier2"] = evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, name, warm)
         rows.append(metrics)
     note = (f"Eval subset: first {len(evaluation)} of {len(ds.eval)} held-out step examples "
             f"({cfg.data.eval_fraction:.0%} of trajectories). Catalog size {len(ds.catalog)}. "

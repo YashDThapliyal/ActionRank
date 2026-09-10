@@ -32,6 +32,7 @@ tier1:
   checkpoint: checkpoints_last/tier1_head.pt
   span_checkpoint: checkpoints_last/tier1_span_head.pt
 tier2:
+  head: table             # table | span: which scoring head is fine-tuned jointly with LoRA
   lora_rank: 8
   lora_alpha: 16
   lora_dropout: 0.05

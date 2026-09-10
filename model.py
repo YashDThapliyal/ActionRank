@@ -229,13 +229,13 @@ def pad_tool_vectors(tools: Sequence[Tensor], examples: Sequence[Example], catal
                      width: int | None = None) -> tuple[Tensor, Tensor, Tensor]:
     """Pad per-example [K_i, D] span vectors to [B, K, D] with a bool mask and catalog indices."""
     width = width or max(t.shape[0] for t in tools)
-    dim = tools[0].shape[1]
-    padded = torch.zeros(len(tools), width, dim, dtype=torch.float32)
+    dim, device = tools[0].shape[1], tools[0].device
+    padded = torch.zeros(len(tools), width, dim, dtype=torch.float32, device=device)
     mask = torch.zeros(len(tools), width, dtype=torch.bool)
     idx = torch.zeros(len(tools), width, dtype=torch.long)
     for row, (vecs, ex) in enumerate(zip(tools, examples)):
         k = vecs.shape[0]
-        padded[row, :k] = vecs.to(torch.float32).cpu()
+        padded[row, :k] = vecs.to(torch.float32)
         mask[row, :k] = True
         idx[row, :k] = torch.tensor([catalog.index(c) for c in ex.candidates])
     return padded, mask, idx
@@ -265,7 +265,8 @@ class SpanActionRankModel(nn.Module):
         q, tools = encode_with_spans(self.tokenizer, self.backbone, [r[0] for r in rendered], [r[1] for r in rendered],
                                      self.cfg, grad=grad, pool_on_cpu=not grad)
         padded, mask, idx = pad_tool_vectors(tools, examples, self.catalog)
-        return self.head(q.to(self.head.proj[0].weight.device), padded.to(q.device), mask, idx, len(self.catalog))
+        head_device = self.head.proj[0].weight.device
+        return self.head(q.to(head_device), padded.to(head_device), mask, idx, len(self.catalog))
 
     @torch.no_grad()
     def rank_example(self, example: Example, catalog: Catalog, k: int, verbalize_cfg=None) -> tuple[int, ...]:

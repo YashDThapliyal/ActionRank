@@ -61,3 +61,43 @@ def test_train_epoch_reports_per_step_losses_and_optimizer_steps(monkeypatch):
     assert len(losses) == 3          # 6 examples / batch 2 = 3 micro-batches
     assert len(steps) == 2           # accumulation 2 -> steps after micro-batch 2 and the final one
     assert all(isinstance(x, float) for x in losses)
+
+
+def _tiny_backbone_with_vocab(vocab: int):
+    cfg = Qwen2Config(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4,
+                      num_key_value_heads=2, vocab_size=vocab, max_position_embeddings=2048)
+    return Qwen2ForCausalLM(cfg).eval()
+
+
+def test_span_tier2_forward_backprops_into_lora_and_head():
+    import dataclasses
+
+    from transformers import AutoTokenizer
+
+    from config import load_config
+    from data import Catalog, Example, ToolSpec
+    from model import SpanActionRankModel, SpanScoringHead, build_candidate_mask, labels_tensor
+    from train_tier2 import tier2_logits, wrap_lora
+
+    cfg = load_config()
+    tok = AutoTokenizer.from_pretrained(cfg.model.backbone)
+    backbone = wrap_lora(_tiny_backbone_with_vocab(len(tok)), cfg.tier2)
+    cat = Catalog((ToolSpec("get_a", "Alpha tool"), ToolSpec("get_b", "Beta tool"), ToolSpec("Finish", "Stop")))
+    head = SpanScoringHead(hidden_dim=32, head_hidden=16, temperature=0.1)
+    model = SpanActionRankModel(tok, backbone, head, dataclasses.replace(cfg.model, pooling="last"), cat)
+    batch = [Example("1", "do a", (), ("get_a", "get_b", "Finish"), "get_a"), Example("2", "done", (), ("get_b", "Finish"), "Finish")]
+    logits = tier2_logits(model, batch, cat, cfg, grad=True)
+    assert logits.shape == (2, 3) and torch.isinf(logits[1, 0])
+    loss = torch.nn.functional.cross_entropy(logits, labels_tensor(batch, cat))
+    loss.backward()
+    lora_grads = [p.grad for n, p in backbone.named_parameters() if "lora_B" in n]
+    assert lora_grads and all(g is not None and g.abs().sum() > 0 for g in lora_grads)
+    assert head.tool_proj[0].weight.grad is not None
+
+
+def test_tier2_head_kind_defaults_to_table_and_reads_meta(tmp_path):
+    from train_tier2 import tier2_head_kind
+
+    assert tier2_head_kind(tmp_path) == "table"
+    (tmp_path / "meta.json").write_text('{"head": "span"}')
+    assert tier2_head_kind(tmp_path) == "span"
