@@ -149,6 +149,8 @@ def write_results(rows: Sequence[Metrics], results_dir: Path, note: str = "",
                   predictions: dict[str, Sequence[Prediction]] | None = None) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "results.json").write_text(json.dumps([asdict(m) for m in rows], indent=1))
+    for stale in results_dir.glob("predictions_*.jsonl"):
+        stale.unlink()  # never leave a previous run's predictions next to fresh results
     for system, preds in (predictions or {}).items():
         (results_dir / f"predictions_{system}.jsonl").write_text(predictions_to_jsonl(preds))
     md = results_dir / "results.md"

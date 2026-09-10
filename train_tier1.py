@@ -147,7 +147,7 @@ def train_head(train: CachedSplit, validation: CachedSplit, cfg: Config, num_too
     history: dict = {"train_loss": [], "eval_top1": [], "eval_top5": [],
                      "eval_top1_before_training": evaluate_head(head, validation, device, t1.batch_size)["top1"]}
     log.info("validation top1 before training: %.4f", history["eval_top1_before_training"])
-    best_state, best_top1 = copy.deepcopy(head.state_dict()), -1.0
+    best_state, best_top1 = copy.deepcopy(head.state_dict()), history["eval_top1_before_training"]
     generator = torch.Generator().manual_seed(cfg.data.split_seed)
     for epoch in range(t1.epochs):
         head.train()
@@ -167,6 +167,7 @@ def train_head(train: CachedSplit, validation: CachedSplit, cfg: Config, num_too
         if scores["top1"] > best_top1:
             best_top1, best_state = scores["top1"], copy.deepcopy(head.state_dict())
     head.load_state_dict(best_state)
+    history["best_top1"] = best_top1
     return head.eval().cpu(), history
 
 

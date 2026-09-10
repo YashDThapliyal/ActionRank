@@ -103,3 +103,16 @@ def test_train_head_uses_text_initialised_tool_embeddings():
     head, history = train_head(train, evaluation, cfg, num_tools=6, hidden_dim=16, tool_init=init)
     assert "eval_top1_before_training" in history
     assert head.tool_embedding.weight.shape == (6, 16)
+
+
+def test_train_head_keeps_initial_head_when_training_does_not_improve():
+    import dataclasses
+
+    cfg = load_config(ROOT / "config.yaml")
+    frozen = dataclasses.replace(cfg, tier1=dataclasses.replace(cfg.tier1, lr=0.0, epochs=2))
+    train = _clustered_split(60, 6, 16, seed=1)
+    evaluation = _clustered_split(30, 6, 16, seed=2)
+    init = torch.nn.functional.normalize(torch.randn(6, 16), dim=-1)
+    head, history = train_head(train, evaluation, frozen, num_tools=6, hidden_dim=16, tool_init=init)
+    assert torch.allclose(head.tool_embedding.weight.detach(), init)
+    assert history["best_top1"] == history["eval_top1_before_training"]

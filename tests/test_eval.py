@@ -118,3 +118,14 @@ def test_evaluate_actionrank_records_per_example_predictions():
     assert m.top1 == 0.0 and m.top5 == 1.0
     assert preds == [{"query_id": "1", "label": "a", "top1": "Finish", "topk": ["Finish", "a"], "valid": True}]
     assert predictions_to_jsonl(preds).strip().startswith('{"query_id": "1"')
+
+
+def test_write_results_removes_stale_prediction_files(tmp_path):
+    from eval import write_results
+
+    stale = tmp_path / "predictions_tier2.jsonl"
+    stale.write_text("{}\n")
+    m = compute_metrics("sys", *_rows())
+    write_results([m], tmp_path, predictions={"tier1": [{"query_id": "1"}]})
+    assert (tmp_path / "predictions_tier1.jsonl").exists()
+    assert not stale.exists()
