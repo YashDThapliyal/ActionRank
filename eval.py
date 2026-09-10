@@ -37,6 +37,17 @@ class Metrics:
     n_no_finish: int
 
 
+Prediction = dict[str, object]
+
+
+def _record(ex: Example, top1: str, topk: Sequence[str], valid: bool) -> Prediction:
+    return {"query_id": ex.query_id, "label": ex.label, "top1": top1, "topk": list(topk), "valid": valid}
+
+
+def predictions_to_jsonl(preds: Sequence[Prediction]) -> str:
+    return "".join(json.dumps(p) + "\n" for p in preds)
+
+
 def _rate(hits: Sequence[bool]) -> float:
     return sum(hits) / len(hits) if hits else 0.0
 
@@ -63,11 +74,14 @@ def compute_metrics(name: str, labels: Sequence[str], top1: Sequence[str], topk:
 
 @torch.no_grad()
 def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], catalog: Catalog, cfg: Config,
-                        name: str, warmup: int = 0) -> Metrics:
-    """One decision at a time (batch size 1) so latency is comparable with the baseline."""
+                        name: str, warmup: int = 0) -> tuple[Metrics, list[Prediction]]:
+    """One decision at a time (batch size 1) so latency is comparable with the baseline.
+
+    Returns the metrics and one record per example (label, top-1, top-k, validity) for error analysis.
+    """
     model.eval()
     names = catalog.names
-    top1, topk, valid, latencies = [], [], [], []
+    top1, topk, valid, latencies, records = [], [], [], [], []
 
     def decide(ex: Example) -> tuple[tuple[int, ...], float]:
         synchronize(model.device)
@@ -86,16 +100,18 @@ def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], cat
         if not picks:
             raise RuntimeError(f"no candidate received a finite score for example {ex.query_id}")
         top1.append(picks[0]); topk.append(picks); valid.append(picks[0] in ex.candidates); latencies.append(elapsed)
-    return compute_metrics(name, [ex.label for ex in examples], top1, topk, valid, latencies)
+        records.append(_record(ex, picks[0], picks, valid[-1]))
+    return compute_metrics(name, [ex.label for ex in examples], top1, topk, valid, latencies), records
 
 
 def evaluate_baseline(examples: Sequence[Example], catalog: Catalog, cfg: Config, tokenizer, backbone,
-                      warmup: int = 0) -> Metrics:
+                      warmup: int = 0) -> tuple[Metrics, list[Prediction]]:
     from baseline import run_baseline
 
     preds = run_baseline(examples, catalog, cfg, tokenizer, backbone, warmup=warmup)
-    return compute_metrics("baseline-generation", [ex.label for ex in examples], [p.top1 for p in preds],
-                           [p.topk for p in preds], [p.in_candidates for p in preds], [p.latency_s for p in preds])
+    metrics = compute_metrics("baseline-generation", [ex.label for ex in examples], [p.top1 for p in preds],
+                              [p.topk for p in preds], [p.in_candidates for p in preds], [p.latency_s for p in preds])
+    return metrics, [_record(ex, p.top1, p.topk, p.in_candidates) for ex, p in zip(examples, preds)]
 
 
 def reference_rows(train: Sequence[Example], evaluation: Sequence[Example], seed: int = 0) -> list[Metrics]:
@@ -129,9 +145,12 @@ def render_table(rows: Sequence[Metrics]) -> str:
     return "\n".join([header, sep, *body]) + "\n"
 
 
-def write_results(rows: Sequence[Metrics], results_dir: Path, note: str = "") -> Path:
+def write_results(rows: Sequence[Metrics], results_dir: Path, note: str = "",
+                  predictions: dict[str, Sequence[Prediction]] | None = None) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "results.json").write_text(json.dumps([asdict(m) for m in rows], indent=1))
+    for system, preds in (predictions or {}).items():
+        (results_dir / f"predictions_{system}.jsonl").write_text(predictions_to_jsonl(preds))
     md = results_dir / "results.md"
     md.write_text(f"# Results\n\n{note}\n\n{render_table(rows)}")
     return md
@@ -156,20 +175,24 @@ def main() -> None:
     limit = args.limit or cfg.eval.max_eval_examples
     evaluation = ds.eval[:limit]
     rows = reference_rows(ds.train, evaluation, seed=cfg.data.split_seed)
+    predictions: dict[str, list[Prediction]] = {}
     tokenizer, backbone = load_backbone(cfg.model)
     warm = cfg.eval.latency_warmup
     if "tier1" in systems:
-        rows.append(evaluate_actionrank(_load_tier1(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier1", warm))
+        metrics, predictions["tier1"] = evaluate_actionrank(_load_tier1(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier1", warm)
+        rows.append(metrics)
     if "baseline" in systems:
-        rows.append(evaluate_baseline(evaluation, ds.catalog, cfg, tokenizer, backbone, warm))
+        metrics, predictions["baseline"] = evaluate_baseline(evaluation, ds.catalog, cfg, tokenizer, backbone, warm)
+        rows.append(metrics)
     if "tier2" in systems:  # last: injecting the LoRA adapter mutates the shared backbone in place
         from train_tier2 import load_tier2
 
-        rows.append(evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier2", warm))
+        metrics, predictions["tier2"] = evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, "actionrank-tier2", warm)
+        rows.append(metrics)
     note = (f"Eval subset: first {len(evaluation)} of {len(ds.eval)} held-out step examples "
             f"({cfg.data.eval_fraction:.0%} of trajectories). Catalog size {len(ds.catalog)}. "
             f"Backbone {cfg.model.backbone} ({cfg.model.dtype}) on {cfg.model.device}.")
-    path = write_results(rows, Path(cfg.eval.results_dir), note)
+    path = write_results(rows, Path(cfg.eval.results_dir), note, predictions)
     print(render_table(rows))
     print(f"written {path}")
 

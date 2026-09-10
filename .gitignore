@@ -7,3 +7,5 @@ cache/
 checkpoints/
 results/*.json
 *.pt
+results/*.jsonl
+results/*.log

@@ -14,3 +14,80 @@ INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwe
 Loading weights:   0%|          | 0/338 [00:00<?, ?it/s]Loading weights:   0%|          | 1/338 [00:01<07:43,  1.38s/it]Loading weights:  51%|█████     | 171/338 [00:01<00:01, 153.87it/s]Loading weights:  71%|███████   | 240/338 [00:02<00:00, 148.28it/s]Loading weights:  84%|████████▍ | 284/338 [00:02<00:00, 133.76it/s]Loading weights:  93%|█████████▎| 315/338 [00:02<00:00, 123.19it/s]Loading weights: 100%|██████████| 338/338 [00:02<00:00, 133.40it/s]Loading weights: 100%|██████████| 338/338 [00:02<00:00, 117.43it/s]
 INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
 INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/generation_config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Fgeneration_config.json=&etag=%22dfc11073787daf1b0f9c0f1499487ab5f4c93738%22 "HTTP/1.1 200 OK"
+INFO reusing cache cache/train.pt (10568 rows)
+INFO reusing cache cache/eval.pt (1855 rows)
+INFO reusing tool vectors cache/tools.pt
+INFO validation top1 before training: 0.1561
+INFO epoch 1 loss 1.5272 eval top1 0.3866 top5 0.8806
+INFO epoch 2 loss 1.4430 eval top1 0.4068 top5 0.8871
+INFO epoch 3 loss 1.4133 eval top1 0.4068 top5 0.8843
+INFO epoch 4 loss 1.3891 eval top1 0.4197 top5 0.8907
+INFO epoch 5 loss 1.3454 eval top1 0.4279 top5 0.8926
+INFO epoch 6 loss 1.3191 eval top1 0.4059 top5 0.8898
+INFO epoch 7 loss 1.3296 eval top1 0.4334 top5 0.8999
+INFO epoch 8 loss 1.2870 eval top1 0.4399 top5 0.8953
+INFO epoch 9 loss 1.2761 eval top1 0.4270 top5 0.8944
+INFO epoch 10 loss 1.2516 eval top1 0.4518 top5 0.8981
+INFO epoch 11 loss 1.2320 eval top1 0.4481 top5 0.8981
+INFO epoch 12 loss 1.2099 eval top1 0.4408 top5 0.8990
+INFO epoch 13 loss 1.1972 eval top1 0.4545 top5 0.8990
+INFO epoch 14 loss 1.1726 eval top1 0.4307 top5 0.9036
+INFO epoch 15 loss 1.1544 eval top1 0.4490 top5 0.8990
+INFO epoch 16 loss 1.1263 eval top1 0.4426 top5 0.8981
+INFO epoch 17 loss 1.1169 eval top1 0.4490 top5 0.8935
+INFO epoch 18 loss 1.1161 eval top1 0.4500 top5 0.8972
+INFO epoch 19 loss 1.0961 eval top1 0.4132 top5 0.8916
+INFO epoch 20 loss 1.0984 eval top1 0.4509 top5 0.8972
+INFO epoch 21 loss 1.0653 eval top1 0.4490 top5 0.9008
+INFO epoch 22 loss 1.0478 eval top1 0.4509 top5 0.8981
+INFO epoch 23 loss 1.0588 eval top1 0.4123 top5 0.8926
+INFO epoch 24 loss 1.1080 eval top1 0.4518 top5 0.8981
+INFO epoch 25 loss 1.0195 eval top1 0.4518 top5 0.8953
+INFO epoch 26 loss 1.0012 eval top1 0.4509 top5 0.9008
+INFO epoch 27 loss 0.9915 eval top1 0.4417 top5 0.9027
+INFO epoch 28 loss 0.9794 eval top1 0.4545 top5 0.8944
+INFO epoch 29 loss 0.9775 eval top1 0.4435 top5 0.8999
+INFO epoch 30 loss 0.9898 eval top1 0.4463 top5 0.8999
+INFO epoch 31 loss 0.9599 eval top1 0.4279 top5 0.8871
+INFO epoch 32 loss 0.9427 eval top1 0.4500 top5 0.8972
+INFO epoch 33 loss 0.9372 eval top1 0.4500 top5 0.8953
+INFO epoch 34 loss 0.9168 eval top1 0.4573 top5 0.9008
+INFO epoch 35 loss 0.9301 eval top1 0.4582 top5 0.8972
+INFO epoch 36 loss 0.8842 eval top1 0.4527 top5 0.8999
+INFO epoch 37 loss 0.8892 eval top1 0.4518 top5 0.8944
+INFO epoch 38 loss 0.8656 eval top1 0.4454 top5 0.8962
+INFO epoch 39 loss 0.8541 eval top1 0.4509 top5 0.9008
+INFO epoch 40 loss 0.8498 eval top1 0.4545 top5 0.9036
+INFO epoch 41 loss 0.8453 eval top1 0.4151 top5 0.8779
+INFO epoch 42 loss 0.8568 eval top1 0.4545 top5 0.8999
+INFO epoch 43 loss 0.8258 eval top1 0.4545 top5 0.9027
+INFO epoch 44 loss 0.8174 eval top1 0.4610 top5 0.9027
+INFO epoch 45 loss 0.7983 eval top1 0.4573 top5 0.8935
+INFO epoch 46 loss 0.7941 eval top1 0.4536 top5 0.8972
+INFO epoch 47 loss 0.7903 eval top1 0.4536 top5 0.9036
+INFO epoch 48 loss 0.8170 eval top1 0.4298 top5 0.8751
+INFO epoch 49 loss 0.7961 eval top1 0.4582 top5 0.8852
+INFO epoch 50 loss 0.7709 eval top1 0.4555 top5 0.8981
+INFO epoch 51 loss 0.7547 eval top1 0.4628 top5 0.8916
+INFO epoch 52 loss 0.7337 eval top1 0.4555 top5 0.9027
+INFO epoch 53 loss 0.7844 eval top1 0.4509 top5 0.8953
+INFO epoch 54 loss 0.7367 eval top1 0.4582 top5 0.8972
+INFO epoch 55 loss 0.7124 eval top1 0.4435 top5 0.8880
+INFO epoch 56 loss 0.6966 eval top1 0.4610 top5 0.8852
+INFO epoch 57 loss 0.6795 eval top1 0.4536 top5 0.8916
+INFO epoch 58 loss 0.6664 eval top1 0.4582 top5 0.8880
+INFO epoch 59 loss 0.6722 eval top1 0.4270 top5 0.8770
+INFO epoch 60 loss 0.6590 eval top1 0.4601 top5 0.8999
+{
+ "encode_seconds": 0.5930546669987962,
+ "n_train": 9479,
+ "n_validation": 1089,
+ "n_eval": 1855,
+ "best_validation_top1": 0.4628099173553719,
+ "held_out_eval": {
+  "top1": 0.4646900269541779,
+  "top5": 0.9078167115902965
+ },
+ "limit": null,
+ "tool_init": "text"
+}

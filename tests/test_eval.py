@@ -92,5 +92,29 @@ def test_evaluate_actionrank_caps_warmup_to_available_examples():
 
     cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
     ex = [Example("1", "q", (), ("a", "Finish"), "a")]
-    m = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake", warmup=3)
+    m, _ = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake", warmup=3)
     assert m.n == 1 and m.top1 == 1.0
+
+
+def test_evaluate_actionrank_records_per_example_predictions():
+    import torch
+
+    from config import load_config
+    from data import Catalog, ToolSpec
+    from eval import evaluate_actionrank, predictions_to_jsonl
+
+    class FakeModel:
+        device = torch.device("cpu")
+
+        def eval(self):
+            return self
+
+        def rank(self, prompts, mask, k):
+            return [(1, 0)]
+
+    cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
+    ex = [Example("1", "q", (), ("a", "Finish"), "a")]
+    m, preds = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake")
+    assert m.top1 == 0.0 and m.top5 == 1.0
+    assert preds == [{"query_id": "1", "label": "a", "top1": "Finish", "topk": ["Finish", "a"], "valid": True}]
+    assert predictions_to_jsonl(preds).strip().startswith('{"query_id": "1"')
