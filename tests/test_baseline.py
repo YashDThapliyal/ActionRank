@@ -27,3 +27,8 @@ def test_normalize_empty():
 
 def test_dedupe_keep_order():
     assert dedupe_keep_order(["b", "a", "b", "c", "a"]) == ("b", "a", "c")
+
+
+def test_normalize_splits_comma_joined_names():
+    assert normalize_tool_name("daily_live_for_x,holidays_for_x") == "daily_live_for_x"
+    assert normalize_tool_name("a_tool; b_tool") == "a_tool"

@@ -37,7 +37,7 @@ def normalize_tool_name(text: str) -> str:
     if not lines:
         return ""
     first = _PREFIX_RE.sub("", lines[0]).strip(_STRIP_CHARS)
-    token = re.split(r"[\s(]", first, maxsplit=1)[0]
+    token = re.split(r"[\s(,;]", first, maxsplit=1)[0]
     return token.strip(_STRIP_CHARS)
 
 
