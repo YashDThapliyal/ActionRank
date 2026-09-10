@@ -110,6 +110,13 @@ Same recipe with the prompt vector taken from the last token instead of the mean
 | actionrank-span | 500 | 62.0% | 96.2% | 0.0% | 264 | 239 | 53.0% (n=362) |
 | actionrank-tier2 | 500 | 53.0% | 90.6% | 0.0% | 284 | 250 | 40.3% (n=362) |
 
+Adding the fine-tuned span head (LoRA r=8 on q/v + `SpanScoringHead`, initialised from the last-pooled span head,
+3 epochs over all 10,568 steps on an A100, 28 minutes; `config_last_span.yaml`):
+
+| system | n | top-1 | top-5 | hallucination | latency mean (ms) | latency p50 (ms) | top-1 excl. Finish |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| actionrank-tier2-span | 500 | 66.6% | 98.2% | 0.0% | 250 | 232 | 58.6% (n=362) |
+
 (Latencies in this block were measured while the machine was under memory pressure from the day's other
 runs; the code path and prompts are identical to the block above, where the same heads cost 231-251 ms.)
 
@@ -137,7 +144,16 @@ Last-token pooling:
 | tier1 | 43.4% | 87.7% (138) | 35.6% | 44.0% (241) | 19.0% (121) |
 | tier2 | 34.0% | 86.2% (138) | 40.3% | 51.5% (241) | 18.2% (121) |
 
-- **Fine-tuning the generator is the strongest single thing you can do.** With the same adapter budget and
+- **Trained the same way, scoring matches generating.** The fine-tuned span scorer (last-token pooling, same
+  LoRA budget and data as the fine-tuned generator) reaches 66.6% top-1 vs. the generator's 66.8%, with 98.2%
+  top-5 vs. 91.4%, 0.0% hallucination vs. 1.4%, and 250 ms vs. 639 ms per decision. Its subset accuracy was still
+  rising at the end of training (63.5% -> 64.5% -> 64.5% -> 68.0%). Breakdown:
+
+| tier2-span | 35.4% | 87.7% (138) | 58.6% | 67.2% (241) | 41.3% (121) |
+
+  It is ahead of the generator on tools seen in training (67.2% vs. 65.6%) and behind on unseen tools
+  (41.3% vs. 49.6%): the remaining gap is generalisation to new descriptions.
+- **Fine-tuning the generator is the strongest single thing you can do to the baseline.** With the same adapter budget and
   data as Tier 2, the generator goes from 31.8% to 66.8% top-1 (sanity subset during training: 31% -> 72%),
   learns to stop (84% `Finish` recall) and generalises best to unseen tools (49.6%). It still names a tool
   that is not offered in 1.4% of decisions and takes 2.8x longer per decision.
@@ -155,9 +171,9 @@ Last-token pooling:
 
 | criterion | vs. prompted generator | vs. fine-tuned generator |
 |---|---|---|
-| match or exceed top-1 / top-5 | yes (62% vs 32%; 96% vs 53%) | no on top-1 (62% vs 67%); yes on top-5 (96% vs 91%) |
+| match or exceed top-1 / top-5 | yes (62% vs 32%; 96% vs 53%) | frozen scorer: no on top-1 (62% vs 67%); fine-tuned span scorer: tie on top-1 (66.6% vs 66.8%), yes on top-5 (98% vs 91%) |
 | near-zero hallucinated tool rate | yes, 0.0% vs 1.8% | yes, 0.0% vs 1.4% |
-| lower latency per decision (prefill-only) | yes, ~2.9x | yes, ~2.7x |
+| lower latency per decision (prefill-only) | yes, ~2.9x | yes, ~2.6x |
 
 ## Notes and limitations
 
@@ -171,8 +187,8 @@ Last-token pooling:
   latency advantage of prefill-only scoring is understated relative to a large-catalog setting.
 - Held-out trajectories share tools with training trajectories only 76% of the time; results on the
   unseen-tool slice are the honest measure of generalisation, and the fine-tuned generator leads there.
-- Next levers, in order: fine-tune the *span* head with last-token pooling (Tier 2 was run with the table
-  head); more Tier 2 epochs (it was still improving); a fine-tuned generator with constrained decoding to
+- Next levers, in order: more epochs for the fine-tuned span scorer (still improving at 3); a
+  description-side objective for unseen tools; a fine-tuned generator with constrained decoding to
   remove its remaining hallucinations, as the strongest possible baseline; larger candidate sets (G3).
 
 ## Running on Colab

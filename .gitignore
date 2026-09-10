@@ -14,3 +14,6 @@ results_last/*.json
 results_last/*.jsonl
 results_last/*.log
 cache_last/
+results_last_span/*.json
+results_last_span/*.jsonl
+results_last_span/*.log
