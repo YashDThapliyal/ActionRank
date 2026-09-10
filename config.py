@@ -1,0 +1,126 @@
+"""Typed, immutable configuration loaded from config.yaml."""
+from __future__ import annotations
+
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+@dataclass(frozen=True)
+class DataConfig:
+    hf_repo: str
+    subset: str
+    raw_dir: str
+    processed_dir: str
+    eval_fraction: float
+    split_seed: int
+    require_win: bool
+    max_files: int | None
+
+
+@dataclass(frozen=True)
+class VerbalizeConfig:
+    full_history_steps: int
+    observation_chars: int
+    args_chars: int
+    description_chars: int
+
+
+@dataclass(frozen=True)
+class ModelConfig:
+    backbone: str
+    device: str
+    dtype: str
+    pooling: str
+    max_prompt_tokens: int
+    head_hidden: int
+    score_temperature: float
+
+
+@dataclass(frozen=True)
+class Tier1Config:
+    cache_dir: str
+    cache_batch_size: int
+    epochs: int
+    batch_size: int
+    lr: float
+    weight_decay: float
+    checkpoint: str
+
+
+@dataclass(frozen=True)
+class Tier2Config:
+    lora_rank: int
+    lora_alpha: int
+    lora_dropout: float
+    lr: float
+    epochs: int
+    batch_size: int
+    grad_accum: int
+    max_train_examples: int
+    checkpoint_dir: str
+
+
+@dataclass(frozen=True)
+class BaselineConfig:
+    max_new_tokens: int
+    num_beams: int
+
+
+@dataclass(frozen=True)
+class EvalConfig:
+    max_eval_examples: int
+    results_dir: str
+    latency_warmup: int
+
+
+@dataclass(frozen=True)
+class Config:
+    data: DataConfig
+    verbalize: VerbalizeConfig
+    model: ModelConfig
+    tier1: Tier1Config
+    tier2: Tier2Config
+    baseline: BaselineConfig
+    eval: EvalConfig
+
+
+_SECTIONS: dict[str, type] = {
+    "data": DataConfig,
+    "verbalize": VerbalizeConfig,
+    "model": ModelConfig,
+    "tier1": Tier1Config,
+    "tier2": Tier2Config,
+    "baseline": BaselineConfig,
+    "eval": EvalConfig,
+}
+
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config.yaml"
+
+
+def _build_section(cls: type, raw: Any, section: str) -> Any:
+    if not isinstance(raw, dict):
+        raise ValueError(f"config section '{section}' must be a mapping")
+    expected = {f.name for f in fields(cls)}
+    missing = expected - raw.keys()
+    extra = raw.keys() - expected
+    if missing or extra:
+        raise ValueError(
+            f"config section '{section}': missing={sorted(missing)} extra={sorted(extra)}"
+        )
+    return cls(**raw)
+
+
+def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
+    """Load and validate config.yaml into a frozen Config tree."""
+    with open(path) as fh:
+        raw = yaml.safe_load(fh)
+    if not isinstance(raw, dict):
+        raise ValueError(f"{path} must contain a mapping at top level")
+    missing = _SECTIONS.keys() - raw.keys()
+    extra = raw.keys() - _SECTIONS.keys()
+    if missing or extra:
+        raise ValueError(f"config sections: missing={sorted(missing)} extra={sorted(extra)}")
+    return Config(**{name: _build_section(cls, raw[name], name) for name, cls in _SECTIONS.items()})

@@ -1,0 +1,47 @@
+data:
+  hf_repo: Adorg/ToolBench
+  subset: G1
+  raw_dir: data/raw
+  processed_dir: data/processed
+  eval_fraction: 0.15
+  split_seed: 13
+  require_win: true
+  max_files: null          # null = all files; set small for smoke runs
+verbalize:
+  full_history_steps: 3    # last K steps rendered in full; older steps collapsed
+  observation_chars: 200
+  args_chars: 120
+  description_chars: 200
+model:
+  backbone: Qwen/Qwen2.5-1.5B-Instruct
+  device: mps              # mps | cuda | cpu (Colab: cuda)
+  dtype: float16
+  pooling: mean            # mean | last
+  max_prompt_tokens: 1024
+  head_hidden: 512
+  score_temperature: 0.05
+tier1:
+  cache_dir: cache
+  cache_batch_size: 8
+  epochs: 20
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.01
+  checkpoint: checkpoints/tier1_head.pt
+tier2:
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  lr: 0.0002
+  epochs: 1
+  batch_size: 2
+  grad_accum: 8
+  max_train_examples: 400
+  checkpoint_dir: checkpoints/tier2
+baseline:
+  max_new_tokens: 32
+  num_beams: 5
+eval:
+  max_eval_examples: 500
+  results_dir: results
+  latency_warmup: 3

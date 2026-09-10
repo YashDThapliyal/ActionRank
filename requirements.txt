@@ -1,0 +1,10 @@
+torch>=2.4
+transformers>=4.45
+peft>=0.13
+accelerate
+huggingface_hub
+pyyaml
+numpy
+tqdm
+safetensors
+pytest
