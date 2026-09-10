@@ -121,8 +121,13 @@ def _build_section(cls: type, raw: Any, section: str) -> Any:
     return cls(**raw)
 
 
-def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
-    """Load and validate config.yaml into a frozen Config tree."""
+def load_config(path: str | Path | None = None) -> Config:
+    """Load and validate config.yaml into a frozen Config tree.
+
+    The path defaults to config.yaml next to this file; ACTIONRANK_CONFIG overrides it (used to evaluate
+    variant runs, e.g. last-token pooling, without touching the main config)."""
+    if path is None:
+        path = os.environ.get("ACTIONRANK_CONFIG") or DEFAULT_CONFIG_PATH
     with open(path) as fh:
         raw = yaml.safe_load(fh)
     if not isinstance(raw, dict):

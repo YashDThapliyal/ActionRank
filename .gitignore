@@ -9,3 +9,8 @@ results/*.json
 *.pt
 results/*.jsonl
 results/*.log
+checkpoints_last/
+results_last/*.json
+results_last/*.jsonl
+results_last/*.log
+cache_last/

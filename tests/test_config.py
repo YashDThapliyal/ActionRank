@@ -34,3 +34,10 @@ def test_device_env_override(monkeypatch):
     monkeypatch.setenv("ACTIONRANK_DEVICE", "cuda")
     cfg = load_config(ROOT / "config.yaml")
     assert cfg.model.device == "cuda"
+
+
+def test_config_path_env_override(monkeypatch, tmp_path):
+    alt = tmp_path / "alt.yaml"
+    alt.write_text((ROOT / "config.yaml").read_text().replace("pooling: mean", "pooling: last"))
+    monkeypatch.setenv("ACTIONRANK_CONFIG", str(alt))
+    assert load_config().model.pooling == "last"
