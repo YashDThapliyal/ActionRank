@@ -102,11 +102,11 @@ def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], cat
 
 
 def evaluate_baseline(examples: Sequence[Example], catalog: Catalog, cfg: Config, tokenizer, backbone,
-                      warmup: int = 0) -> tuple[Metrics, list[Prediction]]:
+                      warmup: int = 0, name: str = "baseline-generation") -> tuple[Metrics, list[Prediction]]:
     from baseline import run_baseline
 
     preds = run_baseline(examples, catalog, cfg, tokenizer, backbone, warmup=warmup)
-    metrics = compute_metrics("baseline-generation", [ex.label for ex in examples], [p.top1 for p in preds],
+    metrics = compute_metrics(name, [ex.label for ex in examples], [p.top1 for p in preds],
                               [p.topk for p in preds], [p.in_candidates for p in preds], [p.latency_s for p in preds])
     return metrics, [_record(ex, p.top1, p.topk, p.in_candidates) for ex, p in zip(examples, preds)]
 
@@ -165,13 +165,13 @@ def _load_span(cfg: Config, catalog: Catalog, tokenizer, backbone) -> SpanAction
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate ActionRank systems and the generation baseline")
-    parser.add_argument("--systems", default="tier1,span,baseline", help="comma list of: tier1, span, tier2, baseline")
+    parser.add_argument("--systems", default="tier1,span,baseline", help="comma list of: tier1, span, tier2, baseline, baseline_sft")
     parser.add_argument("--limit", type=int, default=None, help="override eval.max_eval_examples")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config()
     systems = [s.strip() for s in args.systems.split(",") if s.strip()]
-    unknown = set(systems) - {"tier1", "span", "tier2", "baseline"}
+    unknown = set(systems) - {"tier1", "span", "tier2", "baseline", "baseline_sft"}
     if unknown:
         raise SystemExit(f"unknown systems: {sorted(unknown)}")
     ds = load_dataset(cfg)
@@ -190,6 +190,13 @@ def main() -> None:
     if "baseline" in systems:
         metrics, predictions["baseline"] = evaluate_baseline(evaluation, ds.catalog, cfg, tokenizer, backbone, warm)
         rows.append(metrics)
+    if "baseline_sft" in systems:  # fresh backbone: merging the adapter would otherwise alter the shared one
+        from baseline_sft import load_sft_model
+
+        sft_tok, sft_model = load_sft_model(cfg)
+        metrics, predictions["baseline_sft"] = evaluate_baseline(evaluation, ds.catalog, cfg, sft_tok, sft_model, warm, name="baseline-generation-sft")
+        rows.append(metrics)
+        del sft_model
     if "tier2" in systems:  # last: injecting the LoRA adapter mutates the shared backbone in place
         from train_tier2 import load_tier2
 

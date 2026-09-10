@@ -44,6 +44,8 @@ tier2:
 baseline:
   max_new_tokens: 32
   num_beams: 5
+  sft_epochs: 1            # fine-tuned generation baseline: LoRA with the tier2 rank/lr/batch/accumulation
+  sft_checkpoint_dir: checkpoints/baseline_sft
 eval:
   max_eval_examples: 500
   results_dir: results

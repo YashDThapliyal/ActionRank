@@ -70,6 +70,8 @@ class Tier2Config:
 class BaselineConfig:
     max_new_tokens: int
     num_beams: int
+    sft_epochs: int
+    sft_checkpoint_dir: str
 
 
 @dataclass(frozen=True)
