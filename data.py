@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 FINISH = "Finish"
 GIVE_ANSWER = "give_answer"
 _DESC_RE = re.compile(r'The description of this function is:\s*"(.*)"\s*$', re.DOTALL)
+_TOOL_RE = re.compile(r'This is the subfunction for tool "([^"]+)", you can use this tool\.?')
 
 
 @dataclass(frozen=True)
@@ -93,9 +94,17 @@ class Dataset:
 # --------------------------------------------------------------------------- parsing
 
 def clean_description(raw: str) -> str:
-    """Strip ToolBench's 'This is the subfunction for tool ...' boilerplate."""
+    """Strip ToolBench's 'This is the subfunction for tool ...' boilerplate.
+
+    Falls back to a short tool reference when the function has no description of its own.
+    """
     match = _DESC_RE.search(raw)
-    return (match.group(1) if match else raw).strip()
+    if match and match.group(1).strip():
+        return match.group(1).strip()
+    tool = _TOOL_RE.search(raw)
+    if tool:
+        return f'Subfunction of tool "{tool.group(1)}".'
+    return raw.strip()
 
 
 def _leaf_paths(node: dict) -> list[list[dict]]:

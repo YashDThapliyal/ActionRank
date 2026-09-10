@@ -96,3 +96,14 @@ def test_catalog_roundtrip(tmp_path):
     cat = Catalog((ToolSpec("a", "A"), ToolSpec("Finish", "F")))
     cat.save(tmp_path / "c.json")
     assert Catalog.load(tmp_path / "c.json") == cat
+
+
+def test_clean_description_boilerplate_only_becomes_tool_reference():
+    raw = 'This is the subfunction for tool "retrieve_dns_entries", you can use this tool.'
+    assert clean_description(raw) == 'Subfunction of tool "retrieve_dns_entries".'
+
+
+def test_clean_description_handles_multiline_and_trailing_junk():
+    raw = ('This is the subfunction for tool "x", you can use this tool.The description of this function is: '
+           '"Line one.\nLine two."')
+    assert clean_description(raw) == "Line one.\nLine two."

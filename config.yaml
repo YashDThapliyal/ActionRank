@@ -17,7 +17,7 @@ model:
   device: mps              # mps | cuda | cpu (Colab: cuda)
   dtype: float16
   pooling: mean            # mean | last
-  max_prompt_tokens: 1024
+  max_prompt_tokens: 1280
   head_hidden: 512
   score_temperature: 0.05
 tier1:
