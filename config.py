@@ -1,7 +1,8 @@
 """Typed, immutable configuration loaded from config.yaml."""
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+import os
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -130,4 +131,8 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> Config:
     extra = raw.keys() - _SECTIONS.keys()
     if missing or extra:
         raise ValueError(f"config sections: missing={sorted(missing)} extra={sorted(extra)}")
-    return Config(**{name: _build_section(cls, raw[name], name) for name, cls in _SECTIONS.items()})
+    cfg = Config(**{name: _build_section(cls, raw[name], name) for name, cls in _SECTIONS.items()})
+    device = os.environ.get("ACTIONRANK_DEVICE")  # e.g. cuda on Colab, without editing config.yaml
+    if device:
+        cfg = replace(cfg, model=replace(cfg.model, device=device))
+    return cfg

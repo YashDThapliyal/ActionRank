@@ -28,3 +28,9 @@ def test_unknown_key_is_rejected(tmp_path):
     bad.write_text(good.replace("split_seed:", "typo_seed:"))
     with pytest.raises(ValueError, match="data"):
         load_config(bad)
+
+
+def test_device_env_override(monkeypatch):
+    monkeypatch.setenv("ACTIONRANK_DEVICE", "cuda")
+    cfg = load_config(ROOT / "config.yaml")
+    assert cfg.model.device == "cuda"
