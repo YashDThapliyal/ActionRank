@@ -71,6 +71,8 @@ class BaselineConfig:
     max_new_tokens: int
     num_beams: int
     sft_epochs: int
+    sft_batch_size: int
+    sft_grad_accum: int
     sft_checkpoint_dir: str
 
 

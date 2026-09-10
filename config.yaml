@@ -44,7 +44,9 @@ tier2:
 baseline:
   max_new_tokens: 32
   num_beams: 5
-  sft_epochs: 1            # fine-tuned generation baseline: LoRA with the tier2 rank/lr/batch/accumulation
+  sft_epochs: 1            # fine-tuned generation baseline: LoRA with the tier2 rank/lr; effective batch 16
+  sft_batch_size: 1        # batch 1 + bucketed padding keeps the MPS allocator stable over a long run
+  sft_grad_accum: 16
   sft_checkpoint_dir: checkpoints/baseline_sft
 eval:
   max_eval_examples: 500

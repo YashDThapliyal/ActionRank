@@ -25,6 +25,11 @@ from verbalize import build_baseline_messages
 log = logging.getLogger(__name__)
 IGNORE = -100
 EVAL_SUBSET = 100
+PAD_BUCKET = 64              # pad every batch to a multiple of this so the MPS allocator reuses blocks
+MPS_MEMORY_FRACTION = 0.7    # fail fast on OOM instead of letting the allocator grow into swap
+EXPECTED_S_PER_BATCH = 2.0   # batch-1 micro-batch time measured in the smoke run
+THROUGHPUT_MAX_RATIO = 3.0
+THROUGHPUT_CHECK_AFTER = 100
 
 
 def _ids(tokenizer, text: str) -> list[int]:
@@ -43,7 +48,8 @@ def build_sft_batch(tokenizer, examples: Sequence[Example], catalog: Catalog, ve
         answer = _ids(tokenizer, ex.label) + [tokenizer.eos_token_id]
         prompt_ids = _ids(tokenizer, prompt)[-(max_tokens - len(answer)):]  # left-truncate the prompt
         rows.append((prompt_ids, answer))
-    width = max(len(p) + len(a) for p, a in rows)
+    longest = max(len(p) + len(a) for p, a in rows)
+    width = math.ceil(longest / PAD_BUCKET) * PAD_BUCKET
     pad = tokenizer.pad_token_id
     input_ids = torch.full((len(rows), width), pad, dtype=torch.long)
     labels = torch.full((len(rows), width), IGNORE, dtype=torch.long)
@@ -58,6 +64,30 @@ def build_sft_batch(tokenizer, examples: Sequence[Example], catalog: Catalog, ve
 
 def generation_step_count(n_examples: int, batch_size: int, grad_accum: int) -> int:
     return math.ceil(math.ceil(n_examples / batch_size) / grad_accum)
+
+
+def make_throughput_guard(expected_s: float, max_ratio: float, check_after: int):
+    """Returns guard(step, elapsed_s) that raises once the sustained s/step exceeds max_ratio x expected."""
+    def guard(step: int, elapsed_s: float) -> None:
+        if step < check_after:
+            return
+        per_step = elapsed_s / step
+        if per_step > expected_s * max_ratio:
+            raise RuntimeError(f"SFT throughput {per_step:.1f} s/step after {step} steps exceeds {max_ratio}x the "
+                               f"expected {expected_s} s/step; aborting (memory thrash?)")
+    return guard
+
+
+def _release_accelerator_cache(device: torch.device) -> None:
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    elif device.type == "cuda":
+        torch.cuda.empty_cache()
+
+
+def _cap_accelerator_memory(device: torch.device) -> None:
+    if device.type == "mps":
+        torch.mps.set_per_process_memory_fraction(MPS_MEMORY_FRACTION)
 
 
 def _batches(items: Sequence, size: int):
@@ -86,9 +116,12 @@ def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None =
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     device = next(model.parameters()).device
+    _cap_accelerator_memory(device)
+    batch_size, grad_accum = b.sft_batch_size, b.sft_grad_accum
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=t2.lr)
-    log.info("device %s; trainable fraction %.4f; train examples %d; optimizer steps/epoch %d", device,
-             trainable_fraction(model), len(train_ex), generation_step_count(len(train_ex), t2.batch_size, t2.grad_accum))
+    log.info("device %s; trainable fraction %.4f; train examples %d; batch %d x accum %d; optimizer steps/epoch %d", device,
+             trainable_fraction(model), len(train_ex), batch_size, grad_accum, generation_step_count(len(train_ex), batch_size, grad_accum))
+    guard = make_throughput_guard(EXPECTED_S_PER_BATCH, THROUGHPUT_MAX_RATIO, THROUGHPUT_CHECK_AFTER)
     history: dict = {"step_losses": [], "train_loss": [], "eval_top1": [_quick_top1(model, tokenizer, eval_ex, ds.catalog, cfg)]}
     log.info("eval top1 (n=%d) before training: %.4f", len(eval_ex), history["eval_top1"][0])
     generator = torch.Generator().manual_seed(cfg.data.split_seed)
@@ -96,17 +129,23 @@ def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None =
     for epoch in range(b.sft_epochs):
         model.train()
         order = torch.randperm(len(train_ex), generator=generator).tolist()
-        batches = list(_batches([train_ex[i] for i in order], t2.batch_size))
+        batches = list(_batches([train_ex[i] for i in order], batch_size))
         losses: list[float] = []
         optimizer.zero_grad(set_to_none=True)
+        epoch_started = time.perf_counter()
         for step, batch in enumerate(tqdm(batches, desc=f"sft epoch {epoch + 1}", leave=False), start=1):
             inputs = {k: v.to(device) for k, v in build_sft_batch(tokenizer, batch, ds.catalog, cfg.verbalize, cfg.model.max_prompt_tokens).items()}
             loss = model(**inputs).loss
-            (loss / t2.grad_accum).backward()
+            (loss / grad_accum).backward()
             losses.append(loss.item())
-            if step % t2.grad_accum == 0 or step == len(batches):
+            del loss, inputs
+            if step % grad_accum == 0 or step == len(batches):
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
+                _release_accelerator_cache(device)
+            guard(step, time.perf_counter() - epoch_started)
+            if step % 500 == 0:
+                log.info("step %d/%d  mean loss last 500: %.4f  %.2f s/step", step, len(batches), sum(losses[-500:]) / 500, (time.perf_counter() - epoch_started) / step)
         top1 = _quick_top1(model, tokenizer, eval_ex, ds.catalog, cfg)
         history["step_losses"].append(losses)
         history["train_loss"].append(sum(losses) / max(len(losses), 1))

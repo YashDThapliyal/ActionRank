@@ -41,3 +41,32 @@ def test_sft_batch_masks_loss_to_answer_tokens_only():
 def test_generation_step_count_matches_accumulation():
     assert generation_step_count(n_examples=10568, batch_size=2, grad_accum=8) == 661
     assert generation_step_count(n_examples=6, batch_size=2, grad_accum=2) == 2
+
+
+def test_sft_batch_pads_to_bucket_multiple():
+    from baseline_sft import PAD_BUCKET
+
+    cat = Catalog((ToolSpec("get_a", "A"), ToolSpec("Finish", "F")))
+    examples = [Example("1", "find a", (), ("get_a", "Finish"), "get_a")]
+    batch = build_sft_batch(FakeTokenizer(), examples, cat, load_config().verbalize, max_tokens=512)
+    width = batch["input_ids"].shape[1]
+    assert width % PAD_BUCKET == 0 and width >= int(batch["attention_mask"].sum())
+
+
+def test_throughput_guard_raises_when_sustained_slow():
+    from baseline_sft import make_throughput_guard
+
+    guard = make_throughput_guard(expected_s=2.0, max_ratio=3.0, check_after=10)
+    for step in range(1, 10):
+        guard(step, step * 100.0)  # not checked yet: too early
+    import pytest
+
+    with pytest.raises(RuntimeError, match="throughput"):
+        guard(10, 10 * 7.0)  # 7 s/step > 3x expected
+
+
+def test_throughput_guard_passes_when_fast():
+    from baseline_sft import make_throughput_guard
+
+    guard = make_throughput_guard(expected_s=2.0, max_ratio=3.0, check_after=10)
+    guard(20, 20 * 2.5)
