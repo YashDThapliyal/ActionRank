@@ -54,11 +54,74 @@ Use `--limit N` on any script for a smoke run.
 
 ## Data
 
-<!-- DATA_STATS -->
+- Source: ToolBench G1 answer files (`Adorg/ToolBench`, `answer/G1_answer/*.json`, 5000 files).
+- 3394 files have a winning trajectory (root-to-leaf DFS path ending in `Finish` / `give_answer`); the
+  other 1606 are skipped (`data.require_win: true`).
+- Catalog: 6372 functions (union of every task's API list, plus `Finish`). Tasks list 5.7 candidates on average.
+- Step examples: 10568 train (from 2885 trajectories) and 1855 held-out (from 509 trajectories, 15% of
+  trajectories, seed 13). 27% of labels are `Finish`.
+- Only 3597 of the 6372 catalog tools ever occur as a training label; 24% of held-out labels (34% of the
+  non-`Finish` ones) are tools never seen as a training label. This is the main difficulty of the split.
+- Prompts average ~410 tokens (p95 ~790, budget 1280 with left-truncation so the catalog survives).
 
 ## Results
 
-<!-- RESULTS -->
+All numbers below are on the first 500 held-out step examples (same examples for every system), batch
+size 1, Qwen2.5-1.5B-Instruct in fp16 on an M3 Pro (MPS). Latency covers prompt building, tokenization
+and the model call; the beam-search pass that produces the baseline's top-5 list is not timed.
+`random-candidate` picks uniformly among the task's candidates; `most-frequent-candidate` picks the
+candidate with the highest training-label frequency (always `Finish`).
+
+| system | n | top-1 | top-5 | hallucination | latency mean (ms) | latency p50 (ms) | top-1 excl. Finish |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| random-candidate | 500 | 20.8% | 85.0% | 0.0% | - | - | 19.1% (n=362) |
+| most-frequent-candidate | 500 | 27.6% | 88.0% | 0.0% | - | - | 0.0% (n=362) |
+| actionrank-tier1 | 500 | 49.4% | 91.4% | 0.0% | 236 | 221 | 37.3% (n=362) |
+| baseline-generation | 500 | 31.8% | 53.4% | 1.8% | 665 | 606 | 43.9% (n=362) |
+| actionrank-tier2 | 500 | 49.4% | 91.8% | 0.0% | 236 | 223 | 38.4% (n=362) |
+
+Tier 1 on the full held-out set (1855 steps): 46.5% top-1, 90.8% top-5
+(validation top-1 used for checkpoint selection: 46.3%). Encoding the 12.4k
+prompts once took 79 minutes; head training takes about a minute.
+
+Tier 2 (LoRA r=8 on q/v projections, 400 examples, 1 epoch, 8 minutes locally) starts from the Tier 1
+head and neither helps nor hurts (48.0% -> 47.5% on a 200-step validation subset during training); it
+validates the joint LoRA + head pipeline rather than measuring what a full fine-tune would do.
+
+### Where the accuracy comes from
+
+Per-example predictions are saved to `results/predictions_<system>.jsonl`; the table below slices the
+500 evaluated steps by label type and by whether the labelled tool occurs as a training label at all.
+
+| system | predicts Finish | Finish recall (n) | top-1 non-Finish | top-1 seen tools (n) | top-1 unseen tools (n) |
+|---|---:|---:|---:|---:|---:|
+| baseline | 0.0% | 0.0% (138) | 43.9% | 46.5% (241) | 38.8% (121) |
+| tier1 | 38.8% | 81.2% (138) | 37.3% | 47.3% (241) | 17.4% (121) |
+| tier2 | 36.6% | 78.3% (138) | 38.4% | 49.0% (241) | 17.4% (121) |
+
+- **Stopping.** The generation baseline never outputs `Finish` (0 of 138), even though it is listed as a
+  tool; it always picks an API. ActionRank learns when the trajectory is complete (81% `Finish` recall),
+  which is where most of its top-1 lead over the baseline comes from.
+- **Seen tools.** On non-`Finish` steps whose tool occurs in training, ActionRank and the baseline are
+  on par (47% vs. 46%).
+- **Unseen tools.** On the 121 steps whose tool never appears as a training label, ActionRank is at
+  chance (17%) while the prompted baseline still reads the descriptions (39%). Initialising the tool
+  table from encoded descriptions (`model.tool_init: text`) improved validation top-1 by ~2.5 points and
+  the untrained cosine head alone is at chance (15.6%), so with a *frozen* mean-pooled backbone the
+  description vectors are not yet in a space where prompt-vs-tool similarity is meaningful. This is the
+  motivation for Tier 2 at scale (fine-tuning the encoder so that h and the tool vectors align), which
+  the local 400-example run is far too small to show.
+- **Top-5.** ActionRank's 91% top-5 is only modestly above random-among-candidates (85%) because tasks
+  have ~5.7 candidates; the baseline's 53% top-5 is low because beam search mostly returns spelling
+  variants and comma-joined names of the same tool rather than five distinct valid tools.
+
+### Success criteria
+
+| criterion | outcome |
+|---|---|
+| match or exceed baseline top-1 / top-5 | yes: 49.4% vs. 31.8% top-1, 91% vs. 53% top-5 (but see the seen/unseen split above) |
+| near-zero hallucinated tool rate | yes: 0.0% by construction (baseline 1.8%, plus it can only ever return one candidate) |
+| lower latency per decision, attributable to prefill-only inference | yes: 236 ms vs. 665 ms mean (2.8x); ActionRank runs one forward pass with no decoding |
 
 ## Notes and limitations
 
@@ -70,3 +133,8 @@ Use `--limit N` on any script for a smoke run.
   tokenization. ActionRank = prefill + head; baseline = prefill + greedy decode of the tool name.
 - Tier 2 is a small local run (a few hundred examples, one epoch) to validate the joint LoRA + head
   pipeline; a full run needs a CUDA GPU (`model.device: cuda`).
+- The baseline is prompted, not fine-tuned, so the comparison is "trained head on a frozen backbone"
+  vs. "zero-shot generation with the same backbone". A fine-tuned generation baseline would be the
+  natural next comparison, as would ToolBench G3 (multi-tool tasks, larger candidate sets).
+- Held-out trajectories share tools with training trajectories only 76% of the time; results on the
+  unseen-tool slice are the honest measure of generalisation and ActionRank does not win there yet.

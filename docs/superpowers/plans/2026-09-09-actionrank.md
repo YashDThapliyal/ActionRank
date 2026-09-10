@@ -63,7 +63,7 @@ Each `answer/G1_answer/<qid>_ChatGPT_DFS_woFilter_w2.json` looks like:
 **Interfaces:**
 - Produces: `config.py::load_config(path: str | Path = "config.yaml") -> Config` where `Config` is a frozen dataclass with nested frozen dataclasses `DataConfig`, `VerbalizeConfig`, `ModelConfig`, `Tier1Config`, `Tier2Config`, `BaselineConfig`, `EvalConfig`. Every script calls `load_config()` and reads values from it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_config.py
@@ -84,9 +84,9 @@ def test_config_is_immutable():
         cfg.model.backbone = "x"
 ```
 
-- [ ] **Step 2: Run test to verify it fails** — `.venv/bin/pytest tests/test_config.py -v` → ImportError.
+- [x] **Step 2: Run test to verify it fails** — `.venv/bin/pytest tests/test_config.py -v` → ImportError.
 
-- [ ] **Step 3: Write config.yaml and config.py**
+- [x] **Step 3: Write config.yaml and config.py**
 
 ```yaml
 # config.yaml
@@ -207,8 +207,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
 
 `.gitignore`: `.venv/`, `data/raw/`, `data/processed/`, `cache/`, `checkpoints/`, `__pycache__/`, `.pytest_cache/`, `results/*.json` (keep `results/*.md`).
 
-- [ ] **Step 4: Run tests** — `.venv/bin/pytest tests/test_config.py -v` → PASS.
-- [ ] **Step 5: Commit** — `git add -A && git commit -m "chore: scaffold ActionRank project with config loader"`
+- [x] **Step 4: Run tests** — `.venv/bin/pytest tests/test_config.py -v` → PASS.
+- [x] **Step 5: Commit** — `git add -A && git commit -m "chore: scaffold ActionRank project with config loader"`
 
 ---
 
@@ -235,9 +235,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
   - `prepare_dataset(cfg: Config) -> Dataset` where `@dataclass(frozen=True) Dataset(catalog: Catalog, train: tuple[Example,...], eval: tuple[Example,...])`, also writes `data/processed/{catalog.json, train.jsonl, eval.jsonl}` and `load_dataset(cfg) -> Dataset` reads them back.
   - CLI: `python data.py` runs download + prepare and prints counts.
 
-- [ ] **Step 1: Write fixtures** — `answer_win.json` is the 1006 sample (3 calls + Finish give_answer) with observations truncated to ~300 chars; `answer_branching.json` has a first branch that ends in `give_up_and_restart` and a second branch that ends in `give_answer`; `answer_giveup.json` is the 10028 sample (win false).
+- [x] **Step 1: Write fixtures** — `answer_win.json` is the 1006 sample (3 calls + Finish give_answer) with observations truncated to ~300 chars; `answer_branching.json` has a first branch that ends in `give_up_and_restart` and a second branch that ends in `give_answer`; `answer_giveup.json` is the 10028 sample (win false).
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 ```python
 # tests/test_data.py
@@ -297,9 +297,9 @@ def test_catalog_roundtrip(tmp_path):
     assert Catalog.load(tmp_path / "c.json") == cat
 ```
 
-- [ ] **Step 3: Run tests to verify they fail** — `.venv/bin/pytest tests/test_data.py -v` → ImportError.
+- [x] **Step 3: Run tests to verify they fail** — `.venv/bin/pytest tests/test_data.py -v` → ImportError.
 
-- [ ] **Step 4: Implement data.py**
+- [x] **Step 4: Implement data.py**
 
 Key implementation notes (full code written in the task):
 - `extract_main_path`: DFS over `children`; collect every root-to-leaf path as a list of nodes; convert each path to steps by pairing `Action` nodes with their following `Action Input` node (skip `Thought`); prefer paths whose final step is `Finish` with `"give_answer"` in arguments; tie-break by fewest steps (the cleanest successful path); if none and `require_win` is False, take the longest path.
@@ -310,8 +310,8 @@ Key implementation notes (full code written in the task):
 - `download_subset`: `huggingface_hub.snapshot_download(repo_type="dataset", allow_patterns=[f"answer/{subset}_answer/*"], local_dir=raw_dir)`.
 - Serialization: `dataclasses.asdict` → JSON; jsonl for examples.
 
-- [ ] **Step 5: Run tests** → PASS. Then run `.venv/bin/python data.py` on the real download and record counts (files, win rate, trajectories, steps, catalog size, train/eval sizes) in the README's Data section.
-- [ ] **Step 6: Commit** — `git commit -m "feat: parse ToolBench G1 answers into trajectories, catalog, step examples"`
+- [x] **Step 5: Run tests** → PASS. Then run `.venv/bin/python data.py` on the real download and record counts (files, win rate, trajectories, steps, catalog size, train/eval sizes) in the README's Data section.
+- [x] **Step 6: Commit** — `git commit -m "feat: parse ToolBench G1 answers into trajectories, catalog, step examples"`
 
 ---
 
@@ -329,7 +329,7 @@ Key implementation notes (full code written in the task):
   - `build_baseline_messages(example, catalog, cfg) -> list[dict]` — chat messages for the generation baseline (system: "reply with exactly one tool name from the list"; user: same body).
   - `truncate(text: str, limit: int) -> str` — appends `…` when cut.
 
-- [ ] **Step 1: Failing tests**
+- [x] **Step 1: Failing tests**
 
 ```python
 # tests/test_verbalize.py
@@ -370,8 +370,8 @@ def test_baseline_messages_shape():
     assert [m["role"] for m in msgs] == ["system", "user"] and "a_tool" in msgs[1]["content"]
 ```
 
-- [ ] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** - [ ] **Step 4: Run → pass.**
-- [ ] **Step 5: Commit** — `git commit -m "feat: verbalizer for context + catalog prompts"`
+- [x] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** - [ ] **Step 4: Run → pass.**
+- [x] **Step 5: Commit** — `git commit -m "feat: verbalizer for context + catalog prompts"`
 
 ---
 
@@ -391,7 +391,7 @@ def test_baseline_messages_shape():
   - `class ActionRankModel(nn.Module)`: holds tokenizer, backbone, head, cfg; `forward(prompts, candidate_mask) -> logits`; `rank(prompts, candidate_mask, k) -> LongTensor[B,k]`.
   - `save_head(head, path)`, `load_head(path, num_tools, hidden_dim, cfg) -> ScoringHead`.
 
-- [ ] **Step 1: Failing tests (head + pooling only, no backbone download)**
+- [x] **Step 1: Failing tests (head + pooling only, no backbone download)**
 
 ```python
 # tests/test_model.py
@@ -427,9 +427,9 @@ def test_resolve_device_cpu_always_ok():
     assert resolve_device("cpu").type == "cpu"
 ```
 
-- [ ] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** Add a `@pytest.mark.slow` test `test_encode_prompts_real_backbone` that loads the real backbone and checks `encode_prompts(...).shape == (2, 1536)`; it is skipped unless env `ACTIONRANK_SLOW=1`.
-- [ ] **Step 4: Run → pass**, then run the slow test once locally on MPS to confirm the backbone loads in fp16 and produces finite vectors.
-- [ ] **Step 5: Commit** — `git commit -m "feat: backbone encoder, pooling and catalog scoring head"`
+- [x] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** Add a `@pytest.mark.slow` test `test_encode_prompts_real_backbone` that loads the real backbone and checks `encode_prompts(...).shape == (2, 1536)`; it is skipped unless env `ACTIONRANK_SLOW=1`.
+- [x] **Step 4: Run → pass**, then run the slow test once locally on MPS to confirm the backbone loads in fp16 and produces finite vectors.
+- [x] **Step 5: Commit** — `git commit -m "feat: backbone encoder, pooling and catalog scoring head"`
 
 ---
 
@@ -448,10 +448,10 @@ def test_resolve_device_cpu_always_ok():
   - `topk_accuracy(logits, labels, k) -> float`
   - CLI `python train_tier1.py [--refresh] [--limit N]` → writes `checkpoints/tier1_head.pt` and `results/tier1_history.json`.
 
-- [ ] **Step 1: Failing tests** on a synthetic cache: 200 examples, 6 tools, `h` drawn from 6 gaussian clusters so the head must reach > 0.9 eval top-1 within 20 epochs; `topk_accuracy` unit test; `cache_split` test with a fake encoder (monkeypatch `encode_prompts`) verifying shapes and the skip-if-exists path.
-- [ ] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** - [ ] **Step 4: Run → pass.**
-- [ ] **Step 5: Smoke run** `python train_tier1.py --limit 40` on real data, then full run. Record timing.
-- [ ] **Step 6: Commit** — `git commit -m "feat: tier 1 frozen-backbone caching and head training"`
+- [x] **Step 1: Failing tests** on a synthetic cache: 200 examples, 6 tools, `h` drawn from 6 gaussian clusters so the head must reach > 0.9 eval top-1 within 20 epochs; `topk_accuracy` unit test; `cache_split` test with a fake encoder (monkeypatch `encode_prompts`) verifying shapes and the skip-if-exists path.
+- [x] **Step 2: Run → fail.** - [ ] **Step 3: Implement.** - [ ] **Step 4: Run → pass.**
+- [x] **Step 5: Smoke run** `python train_tier1.py --limit 40` on real data, then full run. Record timing.
+- [x] **Step 6: Commit** — `git commit -m "feat: tier 1 frozen-backbone caching and head training"`
 
 ---
 
@@ -466,9 +466,9 @@ def test_resolve_device_cpu_always_ok():
   - `@dataclass(frozen=True) BaselinePrediction(top1: str, topk: tuple[str,...], latency_s: float, in_candidates: bool, in_catalog: bool)`
   - `predict_one(tokenizer, model, messages, candidates, catalog, cfg) -> BaselinePrediction` — greedy generation for top-1 and latency (timed with `time.perf_counter`, `torch.mps.synchronize()` / `cuda.synchronize()` when applicable), then beam search (`num_beams=cfg.baseline.num_beams`, `num_return_sequences=num_beams`) for the top-k list (deduplicated, top-1 first).
   - `run_baseline(examples, catalog, cfg) -> tuple[BaselinePrediction,...]`
-- [ ] **Step 1: Failing tests** for `normalize_tool_name` (cases: `"get_info_for_x"`, `"`get_info_for_x`"`, `"Action: get_info_for_x\nAction Input: {}"`, `"\"Finish\"."`) and for a `dedupe_keep_order` helper.
-- [ ] **Step 2..4: fail → implement → pass.**
-- [ ] **Step 5: Commit** — `git commit -m "feat: function-calling generation baseline"`
+- [x] **Step 1: Failing tests** for `normalize_tool_name` (cases: `"get_info_for_x"`, `"`get_info_for_x`"`, `"Action: get_info_for_x\nAction Input: {}"`, `"\"Finish\"."`) and for a `dedupe_keep_order` helper.
+- [x] **Step 2..4: fail → implement → pass.**
+- [x] **Step 5: Commit** — `git commit -m "feat: function-calling generation baseline"`
 
 ---
 
@@ -486,9 +486,9 @@ def test_resolve_device_cpu_always_ok():
   - `reference_rows(train_examples, eval_examples) -> list[Metrics]` — `random-candidate` and `most-frequent-candidate` rows (no latency).
   - `render_table(rows: list[Metrics]) -> str` (markdown) and `write_results(rows, results_dir)` → `results/results.md` + `results/results.json`.
   - CLI `python eval.py --systems tier1,baseline[,tier2] [--limit N]`.
-- [ ] **Step 1: Failing tests** for `compute_metrics` on hand-built lists (top-1 2/4, top-5 3/4, hallucination 1/4, no-finish subset), `render_table` header/row count.
-- [ ] **Step 2..4: fail → implement → pass.**
-- [ ] **Step 5: Commit** — `git commit -m "feat: evaluation metrics and results table"`
+- [x] **Step 1: Failing tests** for `compute_metrics` on hand-built lists (top-1 2/4, top-5 3/4, hallucination 1/4, no-finish subset), `render_table` header/row count.
+- [x] **Step 2..4: fail → implement → pass.**
+- [x] **Step 5: Commit** — `git commit -m "feat: evaluation metrics and results table"`
 
 ---
 
@@ -502,18 +502,18 @@ def test_resolve_device_cpu_always_ok():
   - `wrap_lora(backbone, cfg: Tier2Config) -> PeftModel` (`LoraConfig(r, lora_alpha, lora_dropout, target_modules=["q_proj","v_proj"], bias="none")`).
   - `train_tier2(dataset, cfg) -> Path` — joint AdamW over LoRA params + head params, CE over masked logits, grad accumulation, head initialised from the Tier 1 checkpoint if present; saves adapter (`peft save_pretrained`) + head to `checkpoints/tier2/`.
   - `load_tier2(cfg, catalog) -> ActionRankModel`.
-- [ ] **Step 1: Failing test** — `wrap_lora` on a tiny random `Qwen2ForCausalLM` (`Qwen2Config(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, vocab_size=100)`) adds trainable params only in q/v projections and the trainable fraction is < 5%.
-- [ ] **Step 2..4: fail → implement → pass.**
-- [ ] **Step 5: Small local run** (`max_train_examples: 400`, 1 epoch) and evaluate with `eval.py --systems tier2`.
-- [ ] **Step 6: Commit** — `git commit -m "feat: tier 2 LoRA fine-tuning"`
+- [x] **Step 1: Failing test** — `wrap_lora` on a tiny random `Qwen2ForCausalLM` (`Qwen2Config(hidden_size=32, intermediate_size=64, num_hidden_layers=2, num_attention_heads=4, num_key_value_heads=2, vocab_size=100)`) adds trainable params only in q/v projections and the trainable fraction is < 5%.
+- [x] **Step 2..4: fail → implement → pass.**
+- [x] **Step 5: Small local run** (`max_train_examples: 400`, 1 epoch) and evaluate with `eval.py --systems tier2`.
+- [x] **Step 6: Commit** — `git commit -m "feat: tier 2 LoRA fine-tuning"`
 
 ---
 
 ### Task 9: Experiments, README, results
 
-- [ ] Run `python data.py` (full G1), `python train_tier1.py`, `python eval.py --systems tier1,baseline`, `python train_tier2.py`, `python eval.py --systems tier1,tier2,baseline`.
-- [ ] Write README: motivation, pipeline diagram (text), data stats, how to run, results table, discussion vs. success criteria, limitations, Colab switch (`device: cuda`).
-- [ ] Commit — `git commit -m "docs: results and README"`.
+- [x] Run `python data.py` (full G1), `python train_tier1.py`, `python eval.py --systems tier1,baseline`, `python train_tier2.py`, `python eval.py --systems tier1,tier2,baseline`.
+- [x] Write README: motivation, pipeline diagram (text), data stats, how to run, results table, discussion vs. success criteria, limitations, Colab switch (`device: cuda`).
+- [x] Commit — `git commit -m "docs: results and README"`.
 
 ---
 
