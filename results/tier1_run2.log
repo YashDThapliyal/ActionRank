@@ -1,0 +1,52 @@
+INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Fconfig.json=&etag=%22f81ead14ab072d65a07817f83a3ee0e5a1890d10%22 "HTTP/1.1 200 OK"
+INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/tokenizer_config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Ftokenizer_config.json=&etag=%2207bfe0640cb5a0037f9322287fbfc682806cf672%22 "HTTP/1.1 200 OK"
+INFO HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2.5-1.5B-Instruct/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found"
+INFO HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2.5-1.5B-Instruct/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK"
+INFO HTTP Request: GET https://huggingface.co/api/models/Qwen/Qwen2.5-1.5B-Instruct "HTTP/1.1 200 OK"
+INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Fconfig.json=&etag=%22f81ead14ab072d65a07817f83a3ee0e5a1890d10%22 "HTTP/1.1 200 OK"
+INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect"
+INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Fconfig.json=&etag=%22f81ead14ab072d65a07817f83a3ee0e5a1890d10%22 "HTTP/1.1 200 OK"
+Loading weights:   0%|          | 0/338 [00:00<?, ?it/s]Loading weights:   0%|          | 1/338 [00:01<08:18,  1.48s/it]Loading weights:  51%|█████     | 171/338 [00:01<00:01, 147.02it/s]Loading weights:  74%|███████▍  | 251/338 [00:02<00:00, 141.26it/s]Loading weights:  89%|████████▉ | 301/338 [00:02<00:00, 132.30it/s]Loading weights:  99%|█████████▉| 336/338 [00:02<00:00, 127.10it/s]Loading weights: 100%|██████████| 338/338 [00:02<00:00, 113.97it/s]
+INFO HTTP Request: HEAD https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct/resolve/main/generation_config.json "HTTP/1.1 307 Temporary Redirect"
+INFO HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/Qwen/Qwen2.5-1.5B-Instruct/989aa7980e4cf806f80c7fef2b1adb7bc71aa306/generation_config.json?%2FQwen%2FQwen2.5-1.5B-Instruct%2Fresolve%2Fmain%2Fgeneration_config.json=&etag=%22dfc11073787daf1b0f9c0f1499487ab5f4c93738%22 "HTTP/1.1 200 OK"
+INFO reusing cache cache/train.pt (10568 rows)
+INFO reusing cache cache/eval.pt (1855 rows)
+INFO validation top1 before training: 0.1561
+INFO epoch 1 loss 1.5496 eval top1 0.3838 top5 0.8705
+INFO epoch 2 loss 1.4462 eval top1 0.4013 top5 0.8907
+INFO epoch 3 loss 1.4155 eval top1 0.4141 top5 0.8852
+INFO epoch 4 loss 1.3886 eval top1 0.4187 top5 0.8852
+INFO epoch 5 loss 1.3471 eval top1 0.4206 top5 0.8898
+INFO epoch 6 loss 1.3211 eval top1 0.4022 top5 0.8871
+INFO epoch 7 loss 1.3333 eval top1 0.4288 top5 0.8990
+INFO epoch 8 loss 1.2958 eval top1 0.4279 top5 0.8935
+INFO epoch 9 loss 1.2825 eval top1 0.4426 top5 0.8999
+INFO epoch 10 loss 1.2532 eval top1 0.4371 top5 0.8962
+INFO epoch 11 loss 1.2404 eval top1 0.4325 top5 0.8926
+INFO epoch 12 loss 1.2218 eval top1 0.4426 top5 0.8972
+INFO epoch 13 loss 1.1952 eval top1 0.4472 top5 0.8990
+INFO epoch 14 loss 1.1793 eval top1 0.4169 top5 0.8935
+INFO epoch 15 loss 1.1718 eval top1 0.4444 top5 0.8972
+INFO epoch 16 loss 1.1468 eval top1 0.4399 top5 0.8981
+INFO epoch 17 loss 1.1324 eval top1 0.4371 top5 0.8990
+INFO epoch 18 loss 1.1222 eval top1 0.4353 top5 0.8935
+INFO epoch 19 loss 1.1125 eval top1 0.4187 top5 0.8907
+INFO epoch 20 loss 1.1152 eval top1 0.4463 top5 0.8935
+{
+ "encode_seconds": 0.5473574160132557,
+ "n_train": 9479,
+ "n_validation": 1089,
+ "n_eval": 1855,
+ "best_validation_top1": 0.44719926538108357,
+ "held_out_eval": {
+  "top1": 0.45606469002695416,
+  "top5": 0.9110512129380054
+ },
+ "limit": null,
+ "tool_init": "text"
+}

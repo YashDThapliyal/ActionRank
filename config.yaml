@@ -18,13 +18,13 @@ model:
   dtype: float16
   pooling: mean            # mean | last
   max_prompt_tokens: 1280
-  head_hidden: 512
+  head_hidden: 2048
   score_temperature: 0.05
   tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
 tier1:
   cache_dir: cache
   cache_batch_size: 16
-  epochs: 20
+  epochs: 60
   batch_size: 256
   lr: 0.001
   weight_decay: 0.01
