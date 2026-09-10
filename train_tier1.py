@@ -18,8 +18,8 @@ from tqdm import tqdm
 from config import Config, load_config
 from data import Catalog, Example, load_dataset
 from model import catalog_fingerprint
-from model import (ScoringHead, build_candidate_mask, encode_prompts, labels_tensor, load_backbone,
-                   resolve_device, save_head)
+from model import (ScoringHead, build_candidate_mask, encode_prompts, encode_tool_descriptions, labels_tensor,
+                   load_backbone, resolve_device, save_head)
 from verbalize import build_prompt
 
 log = logging.getLogger(__name__)
@@ -87,6 +87,21 @@ def cache_split(examples: Sequence[Example], catalog: Catalog, tokenizer, backbo
     return split
 
 
+def cache_tool_vectors(catalog: Catalog, tokenizer, backbone, cfg: Config, path: Path, refresh: bool = False) -> Tensor:
+    """Encode (and cache) every catalog tool's description with the frozen backbone."""
+    m = cfg.model
+    text = (f"{m.backbone}|{m.dtype}|{m.pooling}|{m.max_prompt_tokens}|{catalog_fingerprint(catalog)}|"
+            + "\n".join(f"{t.name}: {t.description}" for t in catalog.tools))
+    fingerprint = hashlib.sha256(text.encode()).hexdigest()
+    if path.exists() and not refresh and _cached_matches(path, fingerprint):
+        log.info("reusing tool vectors %s", path)
+        return torch.load(path, map_location="cpu")["vectors"]
+    vectors = encode_tool_descriptions(tokenizer, backbone, catalog, m, cfg.tier1.cache_batch_size)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save({"vectors": vectors, "fingerprint": fingerprint}, path)
+    return vectors
+
+
 def _select(split: CachedSplit, rows: Tensor) -> CachedSplit:
     return CachedSplit(h=split.h[rows], labels=split.labels[rows], candidate_mask=split.candidate_mask[rows],
                        query_ids=tuple(split.query_ids[int(i)] for i in rows))
@@ -116,16 +131,22 @@ def evaluate_head(head: ScoringHead, split: CachedSplit, device: torch.device, b
 
 
 def train_head(train: CachedSplit, validation: CachedSplit, cfg: Config, num_tools: int,
-               hidden_dim: int) -> tuple[ScoringHead, dict[str, list[float]]]:
+               hidden_dim: int, tool_init: Tensor | None = None) -> tuple[ScoringHead, dict]:
     """AdamW on the head only; cross-entropy over candidate-masked catalog logits.
 
-    The returned head is the epoch with the best top-1 on `validation`, which must be carved out of the
-    training trajectories (never the held-out eval split).
+    `tool_init` (encoded tool descriptions) seeds the embedding table so tools unseen in training still
+    rank sensibly. The returned head is the epoch with the best top-1 on `validation`, which must be carved
+    out of the training trajectories (never the held-out eval split).
     """
     t1, device = cfg.tier1, resolve_device(cfg.model.device)
-    head = ScoringHead(num_tools, hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature).to(device)
+    head = ScoringHead(num_tools, hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
+    if tool_init is not None:
+        head.init_tool_embeddings(tool_init)
+    head = head.to(device)
     optimizer = torch.optim.AdamW(head.parameters(), lr=t1.lr, weight_decay=t1.weight_decay)
-    history: dict[str, list[float]] = {"train_loss": [], "eval_top1": [], "eval_top5": []}
+    history: dict = {"train_loss": [], "eval_top1": [], "eval_top5": [],
+                     "eval_top1_before_training": evaluate_head(head, validation, device, t1.batch_size)["top1"]}
+    log.info("validation top1 before training: %.4f", history["eval_top1_before_training"])
     best_state, best_top1 = copy.deepcopy(head.state_dict()), -1.0
     generator = torch.Generator().manual_seed(cfg.data.split_seed)
     for epoch in range(t1.epochs):
@@ -166,15 +187,21 @@ def main() -> None:
     train = cache_split(train_ex, ds.catalog, tokenizer, backbone, cfg, cache_dir / f"train{suffix}.pt", refresh=args.refresh)
     evaluation = cache_split(eval_ex, ds.catalog, tokenizer, backbone, cfg, cache_dir / f"eval{suffix}.pt", refresh=args.refresh)
     encode_seconds = time.perf_counter() - started
+    tool_init = None
+    if cfg.model.tool_init == "text":
+        tool_init = cache_tool_vectors(ds.catalog, tokenizer, backbone, cfg, cache_dir / "tools.pt", refresh=args.refresh)
+    elif cfg.model.tool_init != "random":
+        raise ValueError(f"model.tool_init must be 'text' or 'random', got {cfg.model.tool_init!r}")
     train_rows, validation = split_cached(train, validation_fraction, cfg.data.split_seed)
-    head, history = train_head(train_rows, validation, cfg, len(ds.catalog), int(train.h.shape[1]))
+    head, history = train_head(train_rows, validation, cfg, len(ds.catalog), int(train.h.shape[1]), tool_init)
     save_head(head, Path(cfg.tier1.checkpoint), ds.catalog)
     held_out = evaluate_head(head.to(resolve_device(cfg.model.device)), evaluation, resolve_device(cfg.model.device), cfg.tier1.batch_size)
     results_dir = Path(cfg.eval.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     summary = {"history": history, "encode_seconds": encode_seconds, "n_train": len(train_rows),
                "n_validation": len(validation), "n_eval": len(evaluation),
-               "best_validation_top1": max(history["eval_top1"]), "held_out_eval": held_out, "limit": args.limit}
+               "best_validation_top1": max(history["eval_top1"]), "held_out_eval": held_out, "limit": args.limit,
+               "tool_init": cfg.model.tool_init}
     (results_dir / "tier1_history.json").write_text(json.dumps(summary, indent=1))
     print(json.dumps({k: v for k, v in summary.items() if k != "history"}, indent=1))
 

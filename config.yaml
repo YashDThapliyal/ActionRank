@@ -20,6 +20,7 @@ model:
   max_prompt_tokens: 1280
   head_hidden: 512
   score_temperature: 0.05
+  tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
 tier1:
   cache_dir: cache
   cache_batch_size: 16

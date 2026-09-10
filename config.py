@@ -37,6 +37,7 @@ class ModelConfig:
     max_prompt_tokens: int
     head_hidden: int
     score_temperature: float
+    tool_init: str  # text | random
 
 
 @dataclass(frozen=True)

@@ -107,3 +107,34 @@ def test_load_head_rejects_mismatched_catalog(tmp_path):
     assert load_head(tmp_path / "h.pt", cat).tool_embedding.num_embeddings == 2
     with pytest.raises(ValueError, match="catalog"):
         load_head(tmp_path / "h.pt", other)
+
+
+def test_head_starts_as_plain_cosine_similarity():
+    head = ScoringHead(num_tools=3, hidden_dim=4, head_hidden=8, temperature=0.5)
+    init = torch.nn.functional.normalize(torch.randn(3, 4), dim=-1)
+    head.init_tool_embeddings(init)
+    h = torch.randn(2, 4)
+    expected = torch.nn.functional.normalize(h, dim=-1) @ init.T / 0.5
+    assert torch.allclose(head(h, None), expected, atol=1e-5)
+
+
+def test_init_tool_embeddings_rejects_wrong_shape():
+    head = ScoringHead(num_tools=3, hidden_dim=4, head_hidden=8, temperature=0.5)
+    with pytest.raises(ValueError):
+        head.init_tool_embeddings(torch.zeros(2, 4))
+
+
+def test_encode_tool_descriptions_prompts_each_tool(monkeypatch):
+    import model as model_module
+
+    seen = []
+
+    def fake_encode(tokenizer, backbone, prompts, cfg, grad=False):
+        seen.extend(prompts)
+        return torch.ones(len(prompts), 4)
+
+    monkeypatch.setattr(model_module, "encode_prompts", fake_encode)
+    cat = Catalog((ToolSpec("a", "Alpha"), ToolSpec("b", "Beta"), ToolSpec("Finish", "Stop")))
+    vectors = model_module.encode_tool_descriptions(None, None, cat, cfg=None, batch_size=2)
+    assert vectors.shape == (3, 4)
+    assert seen[0] == "Tool: a\nDescription: Alpha" and len(seen) == 3

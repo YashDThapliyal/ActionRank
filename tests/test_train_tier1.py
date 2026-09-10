@@ -93,3 +93,13 @@ def test_cache_is_reencoded_when_prompt_inputs_change(tmp_path, monkeypatch):
     other_catalog = Catalog((ToolSpec("a", "A-different"), ToolSpec("Finish", "F")))
     cache_split(examples, other_catalog, None, None, changed, path, batch_size=8)
     assert len(calls) == 3
+
+
+def test_train_head_uses_text_initialised_tool_embeddings():
+    cfg = load_config(ROOT / "config.yaml")
+    train = _clustered_split(60, 6, 16, seed=1)
+    evaluation = _clustered_split(30, 6, 16, seed=2)
+    init = torch.nn.functional.normalize(torch.randn(6, 16), dim=-1)
+    head, history = train_head(train, evaluation, cfg, num_tools=6, hidden_dim=16, tool_init=init)
+    assert "eval_top1_before_training" in history
+    assert head.tool_embedding.weight.shape == (6, 16)

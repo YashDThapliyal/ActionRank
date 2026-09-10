@@ -83,8 +83,21 @@ def encode_prompts(tokenizer, model, prompts: Sequence[str], cfg: ModelConfig, g
     return pool_hidden(out.last_hidden_state, batch["attention_mask"], cfg.pooling)
 
 
+def encode_tool_descriptions(tokenizer, backbone, catalog: Catalog, cfg: ModelConfig, batch_size: int) -> Tensor:
+    """Pooled backbone vector for every catalog tool's `name: description`, in catalog order ([num_tools, D])."""
+    prompts = [f"Tool: {t.name}\nDescription: {t.description}" for t in catalog.tools]
+    chunks = [encode_prompts(tokenizer, backbone, prompts[i:i + batch_size], cfg).detach().cpu()
+              for i in range(0, len(prompts), batch_size)]
+    return torch.cat(chunks)
+
+
 class ScoringHead(nn.Module):
-    """score(h, tool) = cos(proj(h), E[tool]) / temperature, masked to candidates."""
+    """score(h, tool) = cos(h + mlp(h), E[tool]) / temperature, masked to candidates.
+
+    The projection is residual with a zero-initialised output layer, so an untrained head scores tools by
+    plain cosine similarity between the prompt vector and the tool vector (meaningful when E is initialised
+    from encoded tool descriptions).
+    """
 
     def __init__(self, num_tools: int, hidden_dim: int, head_hidden: int, temperature: float) -> None:
         super().__init__()
@@ -94,9 +107,20 @@ class ScoringHead(nn.Module):
         self.proj = nn.Sequential(nn.Linear(hidden_dim, head_hidden), nn.GELU(), nn.Linear(head_hidden, hidden_dim))
         self.temperature = temperature
         nn.init.normal_(self.tool_embedding.weight, std=0.02)
+        nn.init.zeros_(self.proj[2].weight)
+        nn.init.zeros_(self.proj[2].bias)
+
+    def init_tool_embeddings(self, vectors: Tensor) -> None:
+        """Overwrite the tool table with externally computed vectors (e.g. encoded descriptions)."""
+        expected = tuple(self.tool_embedding.weight.shape)
+        if tuple(vectors.shape) != expected:
+            raise ValueError(f"tool vectors have shape {tuple(vectors.shape)}, expected {expected}")
+        with torch.no_grad():
+            self.tool_embedding.weight.copy_(vectors.to(self.tool_embedding.weight.dtype))
 
     def forward(self, h: Tensor, candidate_mask: Tensor | None) -> Tensor:
-        query = nn.functional.normalize(self.proj(h.to(torch.float32)), dim=-1)
+        h32 = h.to(torch.float32)
+        query = nn.functional.normalize(h32 + self.proj(h32), dim=-1)
         keys = nn.functional.normalize(self.tool_embedding.weight, dim=-1)
         logits = query @ keys.T / self.temperature
         if candidate_mask is None:
