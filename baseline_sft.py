@@ -68,10 +68,13 @@ def _batches(items: Sequence, size: int):
 @torch.no_grad()
 def _quick_top1(model, tokenizer, examples: Sequence[Example], catalog: Catalog, cfg: Config) -> float:
     """Greedy-generation top-1 on a small subset (used before/after training as a sanity signal)."""
+    import dataclasses
+
     from baseline import predict_one
 
+    greedy = dataclasses.replace(cfg, baseline=dataclasses.replace(cfg.baseline, num_beams=1))  # no beam pass here
     model.eval()
-    hits = sum(predict_one(tokenizer, model, ex, catalog, cfg).top1 == ex.label for ex in examples)
+    hits = sum(predict_one(tokenizer, model, ex, catalog, greedy).top1 == ex.label for ex in examples)
     return hits / max(len(examples), 1)
 
 
