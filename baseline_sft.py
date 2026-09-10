@@ -19,7 +19,7 @@ from tqdm import tqdm
 from config import Config, load_config
 from data import Catalog, Dataset, Example, load_dataset
 from model import load_backbone
-from train_tier2 import trainable_fraction, wrap_lora
+from train_tier2 import load_trainable_adapter, trainable_fraction, wrap_lora
 from verbalize import build_baseline_messages
 
 log = logging.getLogger(__name__)
@@ -108,11 +108,16 @@ def _quick_top1(model, tokenizer, examples: Sequence[Example], catalog: Catalog,
     return hits / max(len(examples), 1)
 
 
-def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None = None) -> Path:
+def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None = None,
+              resume: Path | None = None) -> Path:
     t2, b = cfg.tier2, cfg.baseline
     train_ex = ds.train[:limit] if limit else ds.train
     eval_ex = ds.eval[:EVAL_SUBSET]
-    model = wrap_lora(backbone, t2)
+    if resume is not None:
+        log.info("resuming adapter from %s", resume)
+        model = load_trainable_adapter(backbone, resume / "adapter")
+    else:
+        model = wrap_lora(backbone, t2)
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     device = next(model.parameters()).device
@@ -155,7 +160,8 @@ def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None =
     out.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(str(out / "adapter"))
     (out / "history.json").write_text(json.dumps({"history": history, "n_train": len(train_ex), "n_eval_subset": len(eval_ex),
-                                                  "train_seconds": time.perf_counter() - started}, indent=1))
+                                                  "train_seconds": time.perf_counter() - started,
+                                                  "resumed_from": str(resume) if resume else None}, indent=1))
     return out
 
 
@@ -172,12 +178,13 @@ def load_sft_model(cfg: Config, tokenizer=None, backbone=None):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune the generation baseline with LoRA")
     parser.add_argument("--limit", type=int, default=None, help="use only the first N training examples")
+    parser.add_argument("--resume", type=Path, default=None, help="continue from this SFT checkpoint dir")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = load_config()
     ds = load_dataset(cfg)
     tokenizer, backbone = load_backbone(cfg.model)
-    out = train_sft(ds, cfg, tokenizer, backbone, limit=args.limit)
+    out = train_sft(ds, cfg, tokenizer, backbone, limit=args.limit, resume=args.resume)
     print(f"saved SFT baseline to {out}")
     print((out / "history.json").read_text()[:600])
 

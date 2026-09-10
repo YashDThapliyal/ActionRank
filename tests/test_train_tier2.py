@@ -101,3 +101,21 @@ def test_tier2_head_kind_defaults_to_table_and_reads_meta(tmp_path):
     assert tier2_head_kind(tmp_path) == "table"
     (tmp_path / "meta.json").write_text('{"head": "span"}')
     assert tier2_head_kind(tmp_path) == "span"
+
+
+def test_load_trainable_adapter_restores_lora_and_keeps_it_trainable(tmp_path):
+    from config import load_config
+    from train_tier2 import load_trainable_adapter, wrap_lora
+
+    cfg = load_config().tier2
+    first = wrap_lora(_tiny_backbone(), cfg)
+    with torch.no_grad():
+        for n, p in first.named_parameters():
+            if "lora_B" in n:
+                p.fill_(0.5)
+    first.save_pretrained(str(tmp_path / "adapter"))
+    resumed = load_trainable_adapter(_tiny_backbone(), tmp_path / "adapter")
+    lora_b = [(n, p) for n, p in resumed.named_parameters() if "lora_B" in n]
+    assert lora_b and all(torch.all(p == 0.5) for _, p in lora_b)
+    assert all(p.requires_grad for _, p in lora_b)
+    assert not any(p.requires_grad for n, p in resumed.named_parameters() if "lora" not in n)

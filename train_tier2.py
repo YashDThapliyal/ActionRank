@@ -34,6 +34,13 @@ def wrap_lora(backbone, cfg: Tier2Config):
     return get_peft_model(backbone, lora)
 
 
+def load_trainable_adapter(backbone, adapter_dir: Path):
+    """Reload a saved LoRA adapter for continued training (adapter weights trainable, base frozen)."""
+    from peft import PeftModel
+
+    return PeftModel.from_pretrained(backbone, str(adapter_dir), is_trainable=True)
+
+
 def trainable_fraction(model) -> float:
     total = sum(p.numel() for p in model.parameters())
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -118,20 +125,32 @@ def _train_epoch(model: ActionRankModel, optimizer, examples: Sequence[Example],
     return losses
 
 
-def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None = None) -> Path:
-    """Joint AdamW over LoRA + head; saves adapter and head under cfg.tier2.checkpoint_dir."""
+def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None = None,
+                resume: Path | None = None) -> Path:
+    """Joint AdamW over LoRA + head; saves adapter and head under cfg.tier2.checkpoint_dir.
+
+    `resume` continues from a previous Tier 2 checkpoint directory (adapter + head) instead of starting
+    from a fresh adapter and the Tier 1 head; the optimizer state is not restored."""
     t2 = cfg.tier2
     train_ex = ds.train[:limit or t2.max_train_examples]
     eval_ex = ds.eval[:EVAL_SUBSET]
-    peft_model = wrap_lora(backbone, t2)
+    if resume is not None:
+        if tier2_head_kind(resume) != t2.head:
+            raise ValueError(f"checkpoint {resume} has head {tier2_head_kind(resume)!r}, config asks for {t2.head!r}")
+        log.info("resuming adapter + head from %s", resume)
+        peft_model = load_trainable_adapter(backbone, resume / "adapter")
+    else:
+        peft_model = wrap_lora(backbone, t2)
     peft_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     peft_model.enable_input_require_grads()
     device = next(peft_model.parameters()).device
     if t2.head == "span":
-        head = _init_span_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
+        head = (load_span_head(resume / "head.pt", ds.catalog) if resume else
+                _init_span_head(cfg, ds.catalog, backbone.config.hidden_size)).to(device)
         model = SpanActionRankModel(tokenizer, peft_model, head, cfg.model, ds.catalog)
     elif t2.head == "table":
-        head = _init_head(cfg, ds.catalog, backbone.config.hidden_size).to(device)
+        head = (load_head(resume / "head.pt", ds.catalog) if resume else
+                _init_head(cfg, ds.catalog, backbone.config.hidden_size)).to(device)
         model = ActionRankModel(tokenizer, peft_model, head, cfg.model)
     else:
         raise ValueError(f"tier2.head must be 'table' or 'span', got {t2.head!r}")
@@ -160,7 +179,8 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
         save_span_head(head.cpu(), out / "head.pt", ds.catalog)
     else:
         save_head(head.cpu(), out / "head.pt", ds.catalog)
-    (out / "meta.json").write_text(json.dumps({"head": t2.head, "pooling": cfg.model.pooling}))
+    (out / "meta.json").write_text(json.dumps({"head": t2.head, "pooling": cfg.model.pooling,
+                                               "resumed_from": str(resume) if resume else None}))
     (out / "history.json").write_text(json.dumps({"history": history, "n_train": len(train_ex), "n_eval_subset": len(eval_ex),
                                                   "train_seconds": time.perf_counter() - started}, indent=1))
     return out
@@ -181,12 +201,13 @@ def load_tier2(cfg: Config, catalog: Catalog, tokenizer=None, backbone=None) -> 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Tier 2: LoRA fine-tune backbone + head")
     parser.add_argument("--limit", type=int, default=None, help="override tier2.max_train_examples")
+    parser.add_argument("--resume", type=Path, default=None, help="continue from this Tier 2 checkpoint dir")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config()
     ds = load_dataset(cfg)
     tokenizer, backbone = load_backbone(cfg.model)
-    out = train_tier2(ds, cfg, tokenizer, backbone, limit=args.limit)
+    out = train_tier2(ds, cfg, tokenizer, backbone, limit=args.limit, resume=args.resume)
     print(f"saved tier 2 checkpoint to {out}")
     print((out / "history.json").read_text())
 
