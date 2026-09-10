@@ -15,12 +15,36 @@ ROOT = Path("/content/ActionRank")
 
 
 def sh(cmd: str) -> None:
+    """Run a shell command, streaming its output; a heartbeat line every 30 s keeps `colab exec` from
+    timing out while a long step (pip install, training) is quiet."""
+    import threading
+    import time
+
     print(f"$ {cmd}", flush=True)
-    proc = subprocess.run(cmd, shell=True, cwd=ROOT if ROOT.exists() else "/content", stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True)
-    lines = [ln for ln in proc.stdout.splitlines() if "HTTP Request" not in ln]
-    print("\n".join(lines[-80:]), flush=True)
+    proc = subprocess.Popen(cmd, shell=True, cwd=ROOT if ROOT.exists() else "/content", stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, bufsize=1)
+    started, done = time.time(), threading.Event()
+
+    def heartbeat() -> None:
+        while not done.wait(30):
+            print(f"... still running ({int(time.time() - started)} s)", flush=True)
+
+    threading.Thread(target=heartbeat, daemon=True).start()
+    tail: list[str] = []
+    for raw in proc.stdout:
+        for line in raw.replace("\r", "\n").split("\n"):
+            line = line.strip()
+            if not line or "HTTP Request" in line:
+                continue
+            tail.append(line)
+            if "it/s]" in line or "s/it]" in line:
+                if len(tail) % 50:  # print only every 50th progress-bar update
+                    continue
+            print(line, flush=True)
+    proc.wait()
+    done.set()
     if proc.returncode != 0:
+        print("\n".join(tail[-30:]), flush=True)
         raise SystemExit(f"command failed ({proc.returncode}): {cmd}")
 
 
