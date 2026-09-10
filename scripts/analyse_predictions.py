@@ -8,7 +8,7 @@ from data import load_dataset, FINISH
 cfg = load_config(); ds = load_dataset(cfg)
 train_labels = Counter(ex.label for ex in ds.train)
 rows = []
-for path in sorted(Path("results").glob("predictions_*.jsonl")):
+for path in sorted(Path(cfg.eval.results_dir).glob("predictions_*.jsonl")):
     system = path.stem.replace("predictions_", "")
     preds = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
     n = len(preds)
