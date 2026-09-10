@@ -1,5 +1,5 @@
 torch>=2.4
-transformers>=4.45
+transformers>=5.0
 peft>=0.13
 accelerate
 huggingface_hub

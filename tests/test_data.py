@@ -107,3 +107,14 @@ def test_clean_description_handles_multiline_and_trailing_junk():
     raw = ('This is the subfunction for tool "x", you can use this tool.The description of this function is: '
            '"Line one.\nLine two."')
     assert clean_description(raw) == "Line one.\nLine two."
+
+
+def test_require_win_rejects_win_file_without_successful_path(tmp_path):
+    import json
+
+    raw = json.loads((FIX / "answer_giveup.json").read_text())
+    raw["win"] = True
+    path = tmp_path / "77_ChatGPT_DFS_woFilter_w2.json"
+    path.write_text(json.dumps(raw))
+    assert parse_answer_file(path, require_win=True) is None
+    assert parse_answer_file(path, require_win=False) is not None

@@ -72,13 +72,15 @@ def evaluate_actionrank(model: ActionRankModel, examples: Sequence[Example], cat
         started = time.perf_counter()
         prompt = build_prompt(ex, catalog, cfg.verbalize)
         mask = build_candidate_mask([ex], catalog).to(model.device)
-        ranked = model.rank([prompt], mask, min(TOPK, len(catalog)))[0].tolist()
+        ranked = model.rank([prompt], mask, TOPK)[0]
         synchronize(model.device)
         elapsed = time.perf_counter() - started
         if warmup > 0:
             warmup -= 1
             continue
         picks = tuple(names[i] for i in ranked)
+        if not picks:
+            raise RuntimeError(f"no candidate received a finite score for example {ex.query_id}")
         top1.append(picks[0]); topk.append(picks); valid.append(picks[0] in ex.candidates); latencies.append(elapsed)
     return compute_metrics(name, [ex.label for ex in examples], top1, topk, valid, latencies)
 

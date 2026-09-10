@@ -151,7 +151,7 @@ def parse_answer_file(path: Path, require_win: bool) -> Trajectory | None:
     tools = tuple(ToolSpec(name=f["name"], description=clean_description(f.get("description", "")))
                   for f in gen["function"])
     steps = extract_main_path(data["tree"]["tree"])
-    if not steps:
+    if not steps or (require_win and not _is_success(steps)):
         return None
     return Trajectory(query_id=query_id_from_path(path), query=gen["query"], tools=tools, steps=steps)
 

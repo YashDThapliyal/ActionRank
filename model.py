@@ -136,7 +136,7 @@ class ActionRankModel(nn.Module):
         super().__init__()
         self.tokenizer = tokenizer
         self.backbone = backbone
-        self.head = head
+        self.head = head.to(next(backbone.parameters()).device)
         self.cfg = cfg
 
     @property
@@ -147,6 +147,14 @@ class ActionRankModel(nn.Module):
         h = encode_prompts(self.tokenizer, self.backbone, prompts, self.cfg, grad=grad)
         return self.head(h, candidate_mask)
 
+    @staticmethod
+    def rank_logits(logits: Tensor, k: int) -> list[tuple[int, ...]]:
+        """Top-k catalog indices per row, excluding masked (-inf) tools even when fewer than k remain."""
+        k = min(k, logits.shape[-1])
+        values, indices = logits.topk(k, dim=-1)
+        return [tuple(int(i) for i, v in zip(row_idx, row_val) if torch.isfinite(v))
+                for row_idx, row_val in zip(indices.cpu(), values.cpu())]
+
     @torch.no_grad()
-    def rank(self, prompts: Sequence[str], candidate_mask: Tensor | None, k: int) -> Tensor:
-        return self.forward(prompts, candidate_mask).topk(k, dim=-1).indices
+    def rank(self, prompts: Sequence[str], candidate_mask: Tensor | None, k: int) -> list[tuple[int, ...]]:
+        return self.rank_logits(self.forward(prompts, candidate_mask), k)
