@@ -50,6 +50,7 @@ def sh(cmd: str) -> None:
 
 sh("rm -rf /content/ActionRank && mkdir -p /content/ActionRank && unzip -qo /content/actionrank_colab.zip -d /content/ActionRank")
 sh("pip -q install -r requirements.txt")
+sh("pip -q uninstall -y torchao || true")  # Colab preinstalls torchao 0.10, incompatible with transformers 5
 os.environ["ACTIONRANK_DEVICE"] = "cuda"
 sh("nvidia-smi --query-gpu=name,memory.total --format=csv")
 # bigger batches on a real GPU; same effective batch (16) as the local runs
