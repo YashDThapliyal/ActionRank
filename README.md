@@ -7,14 +7,23 @@ that when your choices come from a fixed catalog you shouldn't generate at all: 
 context, then score every catalog item from that single pass. I wanted to know whether the same trick
 works when the "catalog" is an agent's toolbox.
 
-The short answer, on ToolBench with a 1.5B-parameter Qwen backbone, is that once both approaches get the
-same fine-tuning, **scoring the tool list in one forward pass is as accurate as generating the tool name
-(66.6% vs. 66.8% top-1), never picks a tool that isn't offered (0% vs. 1.4%), gives a far better ranking
-(98% vs. 91% top-5), and decides in less than half the time (250 ms vs. 639 ms).** Getting there took a
-detour: the scorer's own fine-tuning did nothing until I changed one detail of how the prompt is pooled,
-and that detail turned a 5-point loss into a tie. The remaining weakness is tools the scorer has never
-seen in training, where the generator is still ahead (50% vs. 41%). The rest of this report is how I got
-each of those numbers and what I think they mean.
+The short answer, on ToolBench with a 1.5B-parameter Qwen backbone, once both approaches get the same
+fine-tuning:
+
+- **Same accuracy.** Scoring the tool list in one forward pass picks the right tool as often as generating
+  its name: 66.6% vs. 66.8% top-1.
+- **Never an invented tool.** The scorer cannot pick a tool that isn't offered (0%); the fine-tuned
+  generator still does, 1.4% of the time.
+- **A far better ranking.** When the scorer is wrong, the right tool is in its top five 98% of the time,
+  vs. 91% for the generator.
+- **Less than half the latency.** 250 ms vs. 639 ms per decision, because there is one prefill and no
+  decoding.
+- **The detour.** The scorer's own fine-tuning did nothing until I changed one detail of how the prompt is
+  pooled; that detail turned a 5-point loss into a tie.
+- **The remaining weakness.** On tools the scorer has never seen in training, the generator is still
+  ahead: 50% vs. 41%.
+
+The rest of this report is how I got each of those numbers and what I think they mean.
 
 ## TL;DR
 
