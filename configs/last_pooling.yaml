@@ -23,16 +23,16 @@ model:
   tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
 tier1:
   head: span              # table = learned per-tool table; span = pool each candidate's line in the prompt
-  cache_dir: cache_last
+  cache_dir: cache/last
   cache_batch_size: 16
   epochs: 60
   batch_size: 256
   lr: 0.001
   weight_decay: 0.01
-  checkpoint: checkpoints_last/tier1_head.pt
-  span_checkpoint: checkpoints_last/tier1_span_head.pt
+  checkpoint: checkpoints/last/tier1_head.pt
+  span_checkpoint: checkpoints/last/tier1_span_head.pt
 tier2:
-  head: span              # table | span: which scoring head is fine-tuned jointly with LoRA
+  head: table             # table | span: which scoring head is fine-tuned jointly with LoRA
   lora_rank: 8
   lora_alpha: 16
   lora_dropout: 0.05
@@ -41,7 +41,7 @@ tier2:
   batch_size: 2
   grad_accum: 8
   max_train_examples: 400
-  checkpoint_dir: checkpoints_last/tier2_span
+  checkpoint_dir: checkpoints/last/tier2
 baseline:
   max_new_tokens: 32
   num_beams: 5
@@ -51,5 +51,5 @@ baseline:
   sft_checkpoint_dir: checkpoints/baseline_sft
 eval:
   max_eval_examples: 500
-  results_dir: results_last_span
+  results_dir: results/02-last-token-pooling
   latency_warmup: 3
