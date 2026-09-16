@@ -59,7 +59,7 @@ The rest of this report is how I got each of those numbers and what I think they
 | Generation, fine-tuned | LoRA adapter | 66.0% | 93.8% | 0.6% | 575 ms |
 | 🟢 **ActionRank, fine-tuned** | **LoRA adapter + scoring head** | **66.6%** | **98.2%** | **0.0%** | **250 ms** |
 
-Read top to bottom. With the backbone untouched, scoring beats generation by 30 points, but that is an unfair fight: the scorer's small head has seen ToolBench and the prompted generator hasn't. Give both the same LoRA adapter and the accuracy gap closes to a tie. What survives is everything else: the scorer keeps zero hallucinations, a much stronger ranking, and less than half the latency. The one place the generator still wins, tools never seen in training, is covered in section 4.4.
+The first two rows aren't a fair comparison: the scorer's head was trained on ToolBench and the prompted generator wasn't, so the 30-point gap mostly reflects that. Rows 3 and 4 are the real test, since both get the same LoRA adapter and the same data. There the top-1 numbers are a tie, but the scorer still has no hallucinations, a better top-5, and less than half the latency. The generator does hold a lead on tools that never appear in training (section 4.4).
 
 ---
 
