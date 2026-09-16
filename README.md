@@ -235,15 +235,18 @@ With last-token pooling, LoRA and the span head trained jointly (initialised fro
 - **One of everything.** One dataset, one backbone size, one training run per system, 500 evaluation steps. A sub-1-point gap is noise; the 7.5-point unseen-tool gap (121 steps) is probably real but wide.
 - **Label noise.** Labels are what one reference agent did, and ToolBench's G1 trajectories often call a tool's endpoints in an arbitrary order, so top-1 has a ceiling well below 100% for any system.
 - **Hardware.** Latencies are from Apple Silicon at batch size 1; the ratio should hold elsewhere, the absolute numbers won't.
+- **Backbone size.** Everything is on a 1.5B model, and not every row would survive a scale-up the same way. The hallucination and latency gaps are structural: a scorer cannot name an off-list tool at any size, and the generator always pays for decoding on top of the same prefill. The untrained row is the most size-specific, since a strong model zero-shot would likely beat a frozen head outright. The unseen-tool gap is the one I'd expect to move: the span head scores a tool from the backbone's reading of its description line, and a bigger backbone reads descriptions better, so that 7.5-point lead for the generator could narrow or close.
 
 ---
 
 ## 7. What I'd do next
 
 1. **Attack the unseen-tool gap directly**: a description-side objective so the span representation of a tool the model has never called still aligns with prompts that need it.
-2. **Move to ToolBench G3** (multi-tool tasks, larger candidate sets). That is where prefill-only scoring should pull away on latency, and where the "large catalog" motivation actually gets tested.
-3. **Three seeds** and the full 1,855-step held-out set for every row.
-4. **A constrained-decoding generator baseline**, so its hallucination rate is also zero and the comparison isolates ranking quality and latency.
+2. **Score the full catalog, not the shortlist.** Drop the per-task candidate list and rank all 6,372 tools. With about 6 candidates, random guessing already gets 85% top-5, so the ranking metric is near its ceiling. Full-catalog retrieval is GenRec's real setting, and it is where a scorer that ranks everything in one pass should separate from a generator that spells one name. I'd run this before anything below.
+3. **Move to ToolBench G3** (multi-tool tasks, longer histories). That is where the context pooling gets stressed and the "large catalog" motivation actually gets tested.
+4. **A larger backbone.** LoRA on a 4-bit 20B-class model fits one A100 for this data volume. Measure latency for both systems on the same GPU rather than the laptop. The question to answer is whether the unseen-tool gap closes once the backbone can read a tool description properly.
+5. **Three seeds** and the full 1,855-step held-out set for every row.
+6. **A constrained-decoding generator baseline**, so its hallucination rate is also zero and the comparison isolates ranking quality and latency.
 
 ---
 
