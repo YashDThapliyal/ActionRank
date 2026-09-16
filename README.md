@@ -36,14 +36,30 @@ The rest of this report is how I got each of those numbers and what I think they
 
 ## TL;DR
 
-Same 500 held-out steps, same backbone, batch size 1 on a laptop GPU.
+**The test.** Every system gets the same 500 held-out ToolBench steps. A step is one decision point in an agent's run: the user's task, the tool calls made so far and what they returned, and a short list of candidate tools (about 6 per task, `Finish` included). The system has to name the tool the reference agent called next. All runs use the same Qwen2.5-1.5B backbone, batch size 1, on a laptop GPU.
 
-| system | trained? | top-1 | top-5 | picks a tool not on the list | latency / decision |
+**The metrics.**
+
+- **Top-1** is how often the system's single best guess is the correct tool. This is the number that matters for an agent that simply executes its first choice.
+- **Top-5** is how often the correct tool is anywhere in the system's five best guesses. It measures how good the *ranking* is, which matters if you retry after a failed call, re-rank with a second model, or show alternatives.
+- **Hallucination rate** is how often the system names a tool that isn't on the task's candidate list at all. A generated name can be misspelled, made up, or a tool from a different task. A scorer can only choose from the list, so its rate is 0% by construction.
+- **Latency** is wall-clock time for one decision, including prompt building and tokenization.
+
+**The systems.** There are two ways to pick a tool, and each is tested untrained and fine-tuned.
+
+- **Generation** is what agent frameworks do today: the LLM writes the tool's name token by token, function-calling style. *Prompted* is the stock model with a chat prompt and no training. *Fine-tuned* adds a LoRA adapter trained on ToolBench to emit the right name.
+- **ActionRank** is the GenRec idea applied to tools: run the LLM over the prompt once, then score every candidate tool from that single pass, with no decoding. The score for each tool comes from the hidden states over that tool's own description line in the prompt (the "span head"). *Frozen backbone* means the LLM is untouched and only the small scoring head is trained, which takes a minute on cached vectors. *Fine-tuned* trains the same LoRA adapter the generator gets, jointly with the head.
+
+**The results.**
+
+| system | what is trained | top-1 | top-5 | hallucination rate | latency / decision |
 |---|---|---:|---:|---:|---:|
-| generation (function-calling style), prompted | no | 31.8% | 53.4% | 1.8% | 726 ms |
-| **ActionRank**, frozen backbone + span head | head only | 62.0% | 96.2% | 0.0% | ~230 ms |
-| generation, LoRA fine-tuned | yes | 66.0% | 93.8% | 0.6% | 575 ms |
-| **ActionRank**, LoRA fine-tuned + span head | yes | 66.6% | **98.2%** | **0.0%** | **250 ms** |
+| Generation, prompted (no training) | nothing | 31.8% | 53.4% | 1.8% | 726 ms |
+| **ActionRank**, frozen backbone (last-token pooling) | scoring head only | 62.0% | 96.2% | 0.0% | ~230 ms |
+| Generation, fine-tuned | LoRA adapter | 66.0% | 93.8% | 0.6% | 575 ms |
+| **ActionRank**, fine-tuned | LoRA adapter + scoring head | 66.6% | **98.2%** | **0.0%** | **250 ms** |
+
+Read top to bottom. With the backbone untouched, scoring beats generation by 30 points, but that is an unfair fight: the scorer's small head has seen ToolBench and the prompted generator hasn't. Give both the same LoRA adapter and the accuracy gap closes to a tie. What survives is everything else: the scorer keeps zero hallucinations, a much stronger ranking, and less than half the latency. The one place the generator still wins, tools never seen in training, is covered in section 4.4.
 
 ---
 
