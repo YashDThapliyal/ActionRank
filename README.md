@@ -55,7 +55,7 @@ The rest of this report is how I got each of those numbers and what I think they
 | system | what is trained | top-1 | top-5 | hallucination rate | latency / decision |
 |---|---|---:|---:|---:|---:|
 | Generation, prompted (no training) | nothing | 31.8% | 53.4% | 1.8% | 726 ms |
-| **ActionRank**, frozen backbone (last-token pooling) | scoring head only | 62.0% | 96.2% | 0.0% | ~230 ms |
+| **ActionRank**, frozen backbone (last-token pooling) | scoring head only | 62.0% | 96.2% | 0.0% | ~260 ms |
 | Generation, fine-tuned | LoRA adapter | 66.0% | 93.8% | 0.6% | 575 ms |
 | **ActionRank**, fine-tuned | LoRA adapter + scoring head | 66.6% | **98.2%** | **0.0%** | **250 ms** |
 
@@ -193,7 +193,7 @@ Switching the scorer to **last-token pooling** and re-running the identical reci
 | mean pooling | 48.0% → 47.5% → 48.0% |
 | last-token pooling | 50.0% → 53.0% → 54.5% |
 
-Same data, same adapter, same head; only the pooling position changed, and the scorer became trainable. For a *frozen* backbone the pooling choice barely matters (span head 56.7% vs. 57.8% top-1 on the full held-out set under mean vs. last), which is why it went unnoticed until Tier 2.
+Same data, same adapter, same head; only the pooling position changed, and the scorer became trainable. For a *frozen* backbone the pooling choice matters much less: on the full 1,855-step held-out set the span head scores 56.7% (mean) vs. 57.8% (last) top-1, and on the 500-step subset used in the tables above, 57.8% vs. 62.0%. Small enough that it went unnoticed until Tier 2.
 
 ### 4.4 Matched fine-tuning: a tie on accuracy, a win on everything else
 
