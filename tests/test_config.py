@@ -41,3 +41,19 @@ def test_config_path_env_override(monkeypatch, tmp_path):
     alt.write_text((ROOT / "config.yaml").read_text().replace("pooling: mean", "pooling: last"))
     monkeypatch.setenv("ACTIONRANK_CONFIG", str(alt))
     assert load_config().model.pooling == "last"
+
+
+def test_train_seed_is_optional_and_defaults_to_none():
+    cfg = load_config()
+    assert cfg.tier2.train_seed is None
+
+
+def test_train_seed_loads_when_present(tmp_path):
+    import yaml
+    from config import DEFAULT_CONFIG_PATH
+
+    raw = yaml.safe_load(open(DEFAULT_CONFIG_PATH))
+    raw["tier2"]["train_seed"] = 7
+    path = tmp_path / "c.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    assert load_config(path).tier2.train_seed == 7

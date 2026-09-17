@@ -1,0 +1,58 @@
+# Seed replicate 3 of the final 3-epoch generator (LoRA SFT from the base model).
+# Identical to configs/generator_3ep.yaml as run on the A100, plus tier2.train_seed.
+data:
+  hf_repo: Adorg/ToolBench
+  subset: G1
+  raw_dir: data/raw
+  processed_dir: data/processed
+  eval_fraction: 0.15
+  split_seed: 13
+  require_win: true
+  max_files: null          # null = all files; set small for smoke runs
+verbalize:
+  full_history_steps: 3    # last K steps rendered in full; older steps collapsed
+  observation_chars: 200
+  args_chars: 120
+  description_chars: 200
+model:
+  backbone: Qwen/Qwen2.5-1.5B-Instruct
+  device: mps              # mps | cuda | cpu (Colab: cuda)
+  dtype: float16
+  pooling: mean            # mean | last
+  max_prompt_tokens: 1280
+  head_hidden: 2048
+  score_temperature: 0.05
+  tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
+tier1:
+  head: span              # table = learned per-tool table; span = pool each candidate's line in the prompt
+  cache_dir: cache
+  cache_batch_size: 16
+  epochs: 60
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.01
+  checkpoint: checkpoints/tier1_head.pt
+  span_checkpoint: checkpoints/tier1_span_head.pt
+tier2:
+  head: table             # table | span: which scoring head is fine-tuned jointly with LoRA
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  lr: 0.0002
+  epochs: 1
+  batch_size: 2
+  grad_accum: 8
+  max_train_examples: 400
+  checkpoint_dir: checkpoints/tier2
+  train_seed: 3
+baseline:
+  max_new_tokens: 32
+  num_beams: 5
+  sft_epochs: 3            # matched budget: same epoch count as the fine-tuned span scorer
+  sft_batch_size: 8        # A100
+  sft_grad_accum: 2        # effective batch 16, as in every run
+  sft_checkpoint_dir: checkpoints/seeds/gen_s3
+eval:
+  max_eval_examples: 500
+  results_dir: results/07-seeds/gen_s3
+  latency_warmup: 3

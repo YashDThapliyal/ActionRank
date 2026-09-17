@@ -119,3 +119,27 @@ def test_load_trainable_adapter_restores_lora_and_keeps_it_trainable(tmp_path):
     assert lora_b and all(torch.all(p == 0.5) for _, p in lora_b)
     assert all(p.requires_grad for _, p in lora_b)
     assert not any(p.requires_grad for n, p in resumed.named_parameters() if "lora" not in n)
+
+
+def _lora_a_weights(model):
+    return [p.detach().clone() for n, p in model.named_parameters() if "lora_A" in n]
+
+
+def test_wrap_lora_is_deterministic_under_a_seed():
+    cfg = load_config().tier2
+    a = _lora_a_weights(wrap_lora(_tiny_backbone(), cfg, seed=1))
+    b = _lora_a_weights(wrap_lora(_tiny_backbone(), cfg, seed=1))
+    c = _lora_a_weights(wrap_lora(_tiny_backbone(), cfg, seed=2))
+    assert all(torch.equal(x, y) for x, y in zip(a, b))
+    assert any(not torch.equal(x, y) for x, y in zip(a, c))
+
+
+def test_training_seed_falls_back_to_split_seed():
+    import dataclasses
+
+    from train_tier2 import training_seed
+
+    cfg = load_config()
+    assert training_seed(cfg) == cfg.data.split_seed
+    seeded = dataclasses.replace(cfg, tier2=dataclasses.replace(cfg.tier2, train_seed=99))
+    assert training_seed(seeded) == 99

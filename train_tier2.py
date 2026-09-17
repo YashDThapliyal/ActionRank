@@ -25,10 +25,19 @@ LORA_TARGETS = ("q_proj", "v_proj")
 EVAL_SUBSET = 200
 
 
-def wrap_lora(backbone, cfg: Tier2Config):
-    """Inject LoRA adapters into q/v projections; only adapter weights are trainable."""
+def training_seed(cfg: Config) -> int:
+    """Seed for everything random in training (shuffle order, LoRA init). Separate from data.split_seed so
+    repeated runs can vary the training randomness while the train/held-out split stays fixed."""
+    return cfg.data.split_seed if cfg.tier2.train_seed is None else cfg.tier2.train_seed
+
+
+def wrap_lora(backbone, cfg: Tier2Config, seed: int | None = None):
+    """Inject LoRA adapters into q/v projections; only adapter weights are trainable. `seed` fixes the
+    adapter initialisation (peft draws it from torch's global RNG)."""
     from peft import LoraConfig, get_peft_model
 
+    if seed is not None:
+        torch.manual_seed(seed)
     lora = LoraConfig(r=cfg.lora_rank, lora_alpha=cfg.lora_alpha, lora_dropout=cfg.lora_dropout,
                       target_modules=list(LORA_TARGETS), bias="none", task_type="CAUSAL_LM")
     return get_peft_model(backbone, lora)
@@ -140,7 +149,7 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
         log.info("resuming adapter + head from %s", resume)
         peft_model = load_trainable_adapter(backbone, resume / "adapter")
     else:
-        peft_model = wrap_lora(backbone, t2)
+        peft_model = wrap_lora(backbone, t2, seed=training_seed(cfg))
     peft_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     peft_model.enable_input_require_grads()
     device = next(peft_model.parameters()).device
@@ -161,7 +170,7 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     history: dict[str, list] = {"train_loss": [], "step_losses": [], "optimizer_steps_per_epoch": [],
                                 "eval_top1": [_eval_top1(model, eval_ex, ds.catalog, cfg)]}
     log.info("eval top1 before training: %.4f", history["eval_top1"][0])
-    generator = torch.Generator().manual_seed(cfg.data.split_seed)
+    generator = torch.Generator().manual_seed(training_seed(cfg))
     started = time.perf_counter()
     for epoch in range(t2.epochs):
         step_losses = _train_epoch(model, optimizer, train_ex, ds.catalog, cfg, generator)

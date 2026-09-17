@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, fields, replace
+from dataclasses import MISSING, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +66,7 @@ class Tier2Config:
     grad_accum: int
     max_train_examples: int
     checkpoint_dir: str
+    train_seed: int | None = None  # shuffle order + LoRA init; None falls back to data.split_seed
 
 
 @dataclass(frozen=True)
@@ -113,7 +114,8 @@ def _build_section(cls: type, raw: Any, section: str) -> Any:
     if not isinstance(raw, dict):
         raise ValueError(f"config section '{section}' must be a mapping")
     expected = {f.name for f in fields(cls)}
-    missing = expected - raw.keys()
+    required = {f.name for f in fields(cls) if f.default is MISSING and f.default_factory is MISSING}
+    missing = required - raw.keys()
     extra = raw.keys() - expected
     if missing or extra:
         raise ValueError(

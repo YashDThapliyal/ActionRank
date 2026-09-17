@@ -19,7 +19,7 @@ from tqdm import tqdm
 from config import Config, load_config
 from data import Catalog, Dataset, Example, load_dataset
 from model import load_backbone
-from train_tier2 import load_trainable_adapter, trainable_fraction, wrap_lora
+from train_tier2 import load_trainable_adapter, trainable_fraction, wrap_lora, training_seed
 from verbalize import build_baseline_messages
 
 log = logging.getLogger(__name__)
@@ -117,7 +117,7 @@ def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None =
         log.info("resuming adapter from %s", resume)
         model = load_trainable_adapter(backbone, resume / "adapter")
     else:
-        model = wrap_lora(backbone, t2)
+        model = wrap_lora(backbone, t2, seed=training_seed(cfg))
     model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.enable_input_require_grads()
     device = next(model.parameters()).device
@@ -129,7 +129,7 @@ def train_sft(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None =
     guard = make_throughput_guard(EXPECTED_S_PER_BATCH, THROUGHPUT_MAX_RATIO, THROUGHPUT_CHECK_AFTER)
     history: dict = {"step_losses": [], "train_loss": [], "eval_top1": [_quick_top1(model, tokenizer, eval_ex, ds.catalog, cfg)]}
     log.info("eval top1 (n=%d) before training: %.4f", len(eval_ex), history["eval_top1"][0])
-    generator = torch.Generator().manual_seed(cfg.data.split_seed)
+    generator = torch.Generator().manual_seed(training_seed(cfg))
     started = time.perf_counter()
     for epoch in range(b.sft_epochs):
         model.train()
