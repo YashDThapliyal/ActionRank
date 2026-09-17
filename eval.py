@@ -47,6 +47,26 @@ def predictions_to_jsonl(preds: Sequence[Prediction]) -> str:
     return "".join(json.dumps(p) + "\n" for p in preds)
 
 
+def _ranked_list(top1: str, topk: Sequence[str], k: int = TOPK) -> list[str]:
+    """The system's ranked guesses: its top-1 first, then the remaining distinct entries, cut to k.
+
+    Earlier versions credited a top-5 hit if the label matched the top-1 *or* any of the first five topk
+    entries, which for the generator (greedy answer + five beams) could span six distinct guesses."""
+    ranked = [top1]
+    for cand in topk:
+        if cand not in ranked:
+            ranked.append(cand)
+    return ranked[:k]
+
+
+def select_eval(steps: Sequence, offset: int, limit: int | None) -> list:
+    """Steps [offset, offset+limit) of the held-out split; offset lets a run avoid the prefix used for training-time logs."""
+    if offset < 0 or offset >= len(steps):
+        raise ValueError(f"offset {offset} outside the {len(steps)} held-out steps")
+    end = len(steps) if limit is None else offset + limit
+    return list(steps[offset:end])
+
+
 def _rate(hits: Sequence[bool]) -> float:
     return sum(hits) / len(hits) if hits else 0.0
 
@@ -58,7 +78,7 @@ def compute_metrics(name: str, labels: Sequence[str], top1: Sequence[str], topk:
     if lengths != {n}:
         raise ValueError(f"length mismatch: labels={n} top1={len(top1)} topk={len(topk)} valid={len(valid)}")
     top1_hits = [p == y for p, y in zip(top1, labels)]
-    top5_hits = [hit or (y in ks[:TOPK]) for hit, ks, y in zip(top1_hits, topk, labels)]
+    top5_hits = [y in _ranked_list(t, ks) for t, ks, y in zip(top1, topk, labels)]
     no_finish = [hit for hit, y in zip(top1_hits, labels) if y != finish_name]
     ms = [1000.0 * s for s in latencies_s] if latencies_s is not None else None
     return Metrics(
@@ -167,6 +187,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate ActionRank systems and the generation baseline")
     parser.add_argument("--systems", default="tier1,span,baseline", help="comma list of: tier1, span, tier2, baseline, baseline_sft")
     parser.add_argument("--limit", type=int, default=None, help="override eval.max_eval_examples")
+    parser.add_argument("--offset", type=int, default=0, help="skip this many held-out steps first (e.g. 500 to avoid the prefix logged during training)")
+    parser.add_argument("--all-remaining", action="store_true", help="evaluate every held-out step from --offset to the end")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     cfg = load_config()
@@ -175,8 +197,8 @@ def main() -> None:
     if unknown:
         raise SystemExit(f"unknown systems: {sorted(unknown)}")
     ds = load_dataset(cfg)
-    limit = args.limit or cfg.eval.max_eval_examples
-    evaluation = ds.eval[:limit]
+    limit = None if args.all_remaining else (args.limit or cfg.eval.max_eval_examples)
+    evaluation = select_eval(ds.eval, args.offset, limit)
     rows = reference_rows(ds.train, evaluation, seed=cfg.data.split_seed)
     predictions: dict[str, list[Prediction]] = {}
     tokenizer, backbone = load_backbone(cfg.model)
@@ -203,7 +225,7 @@ def main() -> None:
         name = "actionrank-tier2" + ("-span" if tier2_head_kind(Path(cfg.tier2.checkpoint_dir)) == "span" else "")
         metrics, predictions["tier2"] = evaluate_actionrank(load_tier2(cfg, ds.catalog, tokenizer, backbone), evaluation, ds.catalog, cfg, name, warm)
         rows.append(metrics)
-    note = (f"Eval subset: first {len(evaluation)} of {len(ds.eval)} held-out step examples "
+    note = (f"Eval subset: held-out steps [{args.offset}, {args.offset + len(evaluation)}) of {len(ds.eval)} "
             f"({cfg.data.eval_fraction:.0%} of trajectories). Catalog size {len(ds.catalog)}. "
             f"Backbone {cfg.model.backbone} ({cfg.model.dtype}) on {cfg.model.device}.")
     path = write_results(rows, Path(cfg.eval.results_dir), note, predictions)

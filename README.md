@@ -10,10 +10,11 @@ Netflix's recommendation team recently argued, in [GenRec](https://netflixtechbl
 
 - **Same accuracy.** Scoring the tool list in one forward pass picks the right tool as often as generating its name: **66.6% vs. 66.0%** top-1.
 - **Never an invented tool.** The scorer cannot pick a tool that isn't offered (**0%**); the fine-tuned generator still does, **0.6%** of the time.
-- **A far better ranking.** When the scorer is wrong, the right tool is in its top five **98%** of the time, vs. **91%** for the generator.
+- **A far better ranking.** When the scorer is wrong, the right tool is in its top five **98%** of the time, vs. **93%** for the generator.
 - **Less than half the latency.** **250 ms vs. 575 ms** per decision, because there is one prefill and no decoding.
 - **The detour.** The scorer's own fine-tuning did nothing until I changed one detail of how the prompt is pooled; that detail turned a 5-point loss into a tie.
-- **The remaining weakness.** On tools the scorer has never seen in training, the generator is still ahead: **50% vs. 41%**.
+- **The remaining weakness.** On tools that were never a training label, the generator is still ahead: **49% vs. 41%**.
+- **The caveat.** The 500 evaluation steps come from the held-out split, but I watched the first 200 of them during scorer training (100 for the generator) to pick nothing and log progress. On the 300 steps neither system saw, the scorer is at 65.7% and the generator at 62.7%. A pre-registered rerun of the frozen final checkpoints on the 1,352 held-out steps outside both monitoring prefixes is the next thing on the list (`docs/experiments/2026-09-16-unmonitored-holdout-rerun.md`). Both systems choose a tool *name*; neither generates arguments.
 
 The rest of this report is how I got each of those numbers and what I think they mean.
 
@@ -36,19 +37,19 @@ The rest of this report is how I got each of those numbers and what I think they
 
 ## TL;DR
 
-**The test.** Every system gets the same 500 held-out ToolBench steps. A step is one decision point in an agent's run: the user's task, the tool calls made so far and what they returned, and a short list of candidate tools (about 6 per task, `Finish` included). The system has to name the tool the reference agent called next. All runs use the same Qwen2.5-1.5B backbone, batch size 1, on a laptop GPU.
+**The test.** Every system gets the same 500 ToolBench steps, the first 500 of the held-out split. A step is one decision point in an agent's run: the user's task, the tool calls made so far and what they returned, and a short list of candidate tools (2 to 11, about 6 on average, `Finish` included). The system has to name the tool the reference agent called next. It picks a name only; argument generation is out of scope. All runs use the same Qwen2.5-1.5B backbone, batch size 1, on a laptop GPU. One caveat: the first 200 of these steps were logged during scorer training (100 for the generator), so this is a development set rather than an untouched test set; section 6 has the unmonitored-subset numbers.
 
 **The metrics.**
 
 - **Top-1** is how often the system's single best guess is the correct tool. This is the number that matters for an agent that simply executes its first choice.
-- **Top-5** is how often the correct tool is anywhere in the system's five best guesses. It measures how good the *ranking* is, which matters if you retry after a failed call, re-rank with a second model, or show alternatives.
+- **Top-5** is how often the correct tool is anywhere in the system's five best guesses. For the generator that list is the greedy answer plus four distinct beam-search alternatives. It measures how good the *ranking* is, which matters if you retry after a failed call, re-rank with a second model, or show alternatives.
 - **Hallucination rate** is how often the system names a tool that isn't on the task's candidate list at all. A generated name can be misspelled, made up, or a tool from a different task. A scorer can only choose from the list, so its rate is 0% by construction.
 - **Latency** is wall-clock time for one decision, including prompt building and tokenization.
 
 **The systems.** There are two ways to pick a tool, and each is tested untrained and fine-tuned.
 
 - **Generation** is what agent frameworks do today: the LLM writes the tool's name token by token, function-calling style. *Prompted* is the stock model with a chat prompt and no training. *Fine-tuned* adds a LoRA adapter trained on ToolBench to emit the right name.
-- **ActionRank** is the GenRec idea applied to tools: run the LLM over the prompt once, then score every candidate tool from that single pass, with no decoding. The score for each tool comes from the hidden states over that tool's own description line in the prompt (the "span head"). *Frozen backbone* means the LLM is untouched and only the small scoring head is trained, which takes a minute on cached vectors. *Fine-tuned* trains the same LoRA adapter the generator gets, jointly with the head.
+- **ActionRank** is the GenRec idea applied to tools: run the LLM over the prompt once, then score every candidate tool from that single pass, with no decoding. The score for each tool comes from the hidden states over that tool's own description line in the prompt (the "span head"). *Frozen backbone* means the LLM is untouched and only the small scoring head is trained, which takes a minute on cached vectors. *Fine-tuned* adds a LoRA adapter with the same configuration the generator gets and trains it jointly with the head, starting from the frozen-backbone head.
 
 **The results.**
 
@@ -56,10 +57,10 @@ The rest of this report is how I got each of those numbers and what I think they
 |---|---|---:|---:|---:|---:|
 | Generation, prompted (no training) | nothing | 31.8% | 53.4% | 1.8% | 726 ms |
 | **ActionRank**, frozen backbone (last-token pooling) | scoring head only | 62.0% | 96.2% | 0.0% | ~260 ms |
-| Generation, fine-tuned | LoRA adapter | 66.0% | 93.8% | 0.6% | 575 ms |
+| Generation, fine-tuned | LoRA adapter | 66.0% | 93.4% | 0.6% | 575 ms |
 | 🟢 **ActionRank, fine-tuned** | **LoRA adapter + scoring head** | **66.6%** | **98.2%** | **0.0%** | **250 ms** |
 
-The first two rows aren't a fair comparison: the scorer's head was trained on ToolBench and the prompted generator wasn't, so the 30-point gap mostly reflects that. Rows 3 and 4 are the real test, since both get the same LoRA adapter and the same data. There the top-1 numbers are a tie, but the scorer still has no hallucinations, a better top-5, and less than half the latency. The generator does hold a lead on tools that never appear in training (section 4.4).
+The first two rows aren't a fair comparison: the scorer's head was trained on ToolBench and the prompted generator wasn't, so the 30-point gap mostly reflects that. Rows 3 and 4 are the real test, since both get the same LoRA configuration, the same data and the same three backbone epochs (the scorer's head starts from the frozen stage; the generator starts from the base model). There the top-1 numbers are a tie, but the scorer still has no hallucinations, a better top-5, and less than half the latency. The generator does hold a lead on tools that were never a training label (section 4.4).
 
 ---
 
@@ -78,7 +79,7 @@ Because only existing embeddings get scored, recommending a non-existent film is
 
 **Agent tool selection has the same shape.** There is a fixed set of tools. The agent has a history (what it has called so far and what came back). It must pick the next action. Today that pick is generated, with exactly the problems GenRec lists: decoding cost, hallucinated tool names, no distribution over the action space.
 
-> **Hypothesis.** Replace "generate a function call" with "score the toolbox", and you should get zero hallucination and lower latency at no cost in accuracy. The first two are almost guaranteed by the design; the third is the empirical question.
+> **Hypothesis.** Replace "generate a function call" with "score the toolbox", and you should get zero hallucination and lower latency at no cost in accuracy. The first two are guaranteed by the design; whether the third holds, and whether such a scorer can be trained at all, is the empirical question.
 
 ---
 
@@ -111,9 +112,9 @@ Two deliberate departures from GenRec:
 - **Trajectories.** I keep the root-to-leaf path that ends in `Finish` with an answer: 3,394 of 5,000 files.
 - **Steps.** Each trajectory is sliced into one example per call: context = query + calls so far, label = the next call. `Finish` is a catalog tool, since deciding to stop is part of choosing the next action.
 - **Split.** 15% of *trajectories* (not steps) are held out so no task leaks between train and eval: 10,568 training steps from 2,885 trajectories, 1,855 held-out steps from 509.
-- **Catalog.** The union of every task's tools: 6,372. Each task lists 5.7 candidates on average (max 11).
+- **Catalog.** The union of every task's tools: 6,372. Each step lists between 2 and 11 candidates, about 6 on average.
 
-> **The fact that shaped everything:** 24% of held-out labels are tools that never appear as a training label. Only 3,597 of the 6,372 catalog tools have any training signal at all.
+> **The fact that shaped everything:** 24% of held-out labels are tools that never appear as a training label (10% never appear even as a candidate). Only 3,597 of the 6,372 catalog tools have any positive training signal at all. Throughout, "unseen" means *never a training label*, and "seen" means a training label at least once; both are computed over non-`Finish` steps (241 seen, 121 unseen in the 500).
 
 ### Prompt
 
@@ -128,19 +129,19 @@ Two deliberate departures from GenRec:
 ### Training
 
 - **Tier 1.** Cache one backbone pass per prompt (about 80 minutes on the laptop for 12.4k prompts), train only the head. The checkpoint epoch is chosen on a validation slice carved from *training* trajectories, never on the held-out set.
-- **Tier 2.** Wrap the backbone with LoRA (rank 8, `q_proj`/`v_proj`, lr 2e-4, effective batch 16) and train adapter + head jointly on all 10,568 steps.
+- **Tier 2.** Wrap the backbone with LoRA (rank 8, `q_proj`/`v_proj`, lr 2e-4, effective batch 16) and train adapter + head jointly on all 10,568 steps, with the head initialised from the Tier 1 checkpoint. After each epoch the script logs top-1 on the first 200 held-out steps. No checkpoint selection was done on that number, but those 200 steps sit inside the 500-step evaluation subset, which is why section 6 treats the 500 as a development set.
 
 ### Baselines
 
 - **Prompted generation.** The same backbone, chat-prompted with the same task/history/tool list and asked to reply with exactly one tool name. Greedy decoding gives top-1 and latency; beam search (5) gives a top-5 list. Zero-shot.
-- **Fine-tuned generation.** Same LoRA adapter, data and effective batch as Tier 2, trained to emit the tool name with loss only on the answer tokens.
+- **Fine-tuned generation.** Same LoRA configuration, data and effective batch as Tier 2, trained from the base model to emit the tool name with loss only on the answer tokens. Its per-epoch log uses the first 100 held-out steps.
 - **Reference rows.** Uniform random among candidates, and the globally most frequent label (always `Finish`).
 
 A prediction is a *hallucination* if the name isn't on the task's candidate list.
 
 ### Metrics
 
-Top-1 and top-5 accuracy against the reference agent's next call, hallucination rate, and wall-clock latency per decision measured identically for every system (prompt building, tokenization, and the model call, at batch size 1; the beam pass is not timed).
+Top-1 and top-5 accuracy against the reference agent's next call, hallucination rate, and wall-clock latency per decision measured identically for every system (prompt building, tokenization, and the model call, at batch size 1; the beam pass is not timed). Top-5 is over a strict five-item list: the greedy answer followed by distinct beam outputs. The saved `results*.md` files were written by an earlier evaluator that credited the greedy answer *or* any of five beams (up to six guesses); the generator rows below are recomputed from the prediction files with the strict definition, which lowers the prompted generator from 53.4% to 52.8%, the 3-epoch generator from 93.8% to 93.4%, and random from 85.0% to 83.4%. Scorer rows are unchanged, since their list starts with their top-1.
 
 ---
 
@@ -152,21 +153,21 @@ Everything below is on the first 500 held-out steps (the same 500 for every syst
 
 | system | top-1 | top-5 | hallucination | latency |
 |---|---:|---:|---:|---:|
-| prompted generation | 31.8% | 53.4% | 1.8% | 726 ms |
+| prompted generation | 31.8% | 52.8% | 1.8% | 726 ms |
 | ActionRank table head, frozen backbone | 49.4% | 91.4% | 0.0% | 235 ms |
 | ActionRank span head, frozen backbone | 57.8% | 97.2% | 0.0% | 231 ms |
-| random among candidates | 20.8% | 85.0% | – | – |
+| random among candidates | 20.8% | 83.4% | – | – |
 
 This is the result the hypothesis predicted, and also the least interesting one: the scorer has a trained head and the generator has nothing. The prediction dumps show where the gap comes from.
 
 - **Stopping.** The prompted generator **never outputs `Finish`** (0 of 138 steps where stopping was the right call). The scorers learn it (81–89% recall).
-- **Seen tools.** On non-`Finish` steps whose tool was seen in training, the table head and the generator are level (47% vs. 46%).
-- **Unseen tools.** On the 121 steps whose tool was never seen in training, the table head is at chance (17%) while the generator, which actually reads the description, gets 39%. A learned embedding that was never trained cannot rank a tool, no matter how good `h` is.
+- **Seen tools.** On non-`Finish` steps whose tool was a training label, the table head and the generator are level (47% vs. 46%).
+- **Unseen tools.** On the 121 steps whose tool was never a training label, the table head is at chance (17%) while the generator, which actually reads the description, gets 39%. An embedding row that never received a positive example cannot rank a tool, no matter how good `h` is.
 - **The span head**, which reads the description from inside the prompt, recovers most of that (33%).
 
 ### 4.2 A fair baseline erases the accuracy lead
 
-Fine-tuning the generator with the same adapter and data (one epoch, 12 minutes on an A100) is the strongest single intervention in the whole project.
+Fine-tuning the generator with the same LoRA configuration and data (one epoch, 12 minutes on an A100) is the strongest single intervention in the whole project.
 
 | system | top-1 | top-5 | hallucination | latency | seen tools | unseen tools | `Finish` recall |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -177,51 +178,51 @@ The generator learns to stop, jumps 35 points, and leads on unseen tools by 16. 
 
 ### 4.3 The scorer couldn't be fine-tuned, until it could
 
-The obvious response is to fine-tune the scorer's backbone too. The first attempt (LoRA + table head, all 10,568 steps, 2 epochs) was a clean null: **48.0% → 47.5% → 48.0%** on a validation subset, loss flat.
+The obvious response is to fine-tune the scorer's backbone too. The first attempt (LoRA + table head, all 10,568 steps, 2 epochs) was a null: **48.0% → 47.5% → 48.0%** top-1 on the first 200 held-out steps. Training loss fell slightly (0.82 after epoch 1, about 0.79 after epoch 2); accuracy did not follow.
 
 I checked whether the run was broken. It wasn't:
 
 - With the adapter enabled, the pooled vector `h` changes by about 10% relative to the frozen one.
 - The LoRA parameters receive a gradient norm of 0.51, against 1.18 for the head.
 
-The adapter was learning; the metric wasn't moving. **The cause was the pooling position.** GenRec takes "the hidden state at a pooling position"; I had been taking the *mean* over all ~400 prompt tokens. A small adapter has to shift hundreds of token states coherently to move that mean, whereas the generator reads one sharp next-token distribution at the last position.
+The adapter was learning; the metric wasn't moving. **My best explanation is the pooling position.** GenRec takes "the hidden state at a pooling position"; I had been taking the *mean* over all ~400 prompt tokens. A small adapter has to shift hundreds of token states coherently to move that mean, whereas the generator reads one sharp next-token distribution at the last position.
 
 Switching the scorer to **last-token pooling** and re-running the identical recipe:
 
-| Tier 2 (LoRA + table head), 2 epochs | validation subset top-1 by epoch |
+| Tier 2 (LoRA + table head), 2 epochs | top-1 on the first 200 held-out steps, by epoch |
 |---|---|
 | mean pooling | 48.0% → 47.5% → 48.0% |
 | last-token pooling | 50.0% → 53.0% → 54.5% |
 
-Same data, same adapter, same head; only the pooling position changed, and the scorer became trainable. For a *frozen* backbone the pooling choice matters much less: on the full 1,855-step held-out set the span head scores 56.7% (mean) vs. 57.8% (last) top-1, and on the 500-step subset used in the tables above, 57.8% vs. 62.0%. Small enough that it went unnoticed until Tier 2.
+Same data, same LoRA configuration, same head; only the pooling position changed, and the scorer became trainable. I have not isolated the mechanism beyond this one controlled swap. For a *frozen* backbone the pooling choice matters much less: on the full 1,855-step held-out set the span head scores 56.7% (mean) vs. 57.8% (last) top-1, and on the 500-step subset used in the tables above, 57.8% vs. 62.0%. Small enough that it went unnoticed until Tier 2.
 
 ### 4.4 Matched fine-tuning: a tie on accuracy, a win on everything else
 
-With last-token pooling, LoRA and the span head trained jointly (initialised from the frozen span head, 3 epochs over all steps). The generator row is the same adapter budget trained for the same 3 epochs:
+With last-token pooling, LoRA and the span head trained jointly (head initialised from the frozen Tier 1 span head, 3 epochs over all steps). The generator row uses the same LoRA configuration, data and 3 epochs, starting from the base model. Both get three epochs of backbone fine-tuning; the scorer additionally carries its one-minute head-only stage, so the budgets are matched on the backbone, not identical in total:
 
 | system | top-1 | top-5 | hallucination | latency | seen tools | unseen tools | `Finish` recall |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| fine-tuned generation, 3 epochs | 66.0% | 93.8% | 0.6% | 575 ms | 68.0% | **48.8%** | 78% |
+| fine-tuned generation, 3 epochs | 66.0% | 93.4% | 0.6% | 575 ms | 68.0% | **48.8%** | 78% |
 | **fine-tuned ActionRank** (span head, last pooling), 3 epochs | 66.6% | **98.2%** | **0.0%** | **250 ms** | 67.2% | 41.3% | **88%** |
 
-- **Accuracy.** The two pick the correct tool equally often, overall and on tools seen in training (a 0.6-point and a 0.8-point gap in opposite directions, both noise at n=500). On unseen tools the generator keeps a 7.5-point lead.
-- **Ranking.** When the scorer is wrong, the right tool is in its top five 98% of the time. The generator's beam-search alternatives are mostly respellings and comma-joined variants of its first guess, so its top-5 is only 94%.
+- **Accuracy.** The two pick the correct tool equally often, overall and on training-label tools (a 0.6-point and a 0.8-point gap in opposite directions, both noise at n=500; paired, 57 steps only the scorer gets right vs. 54 only the generator). On tools that were never a training label the generator keeps a 7.5-point lead.
+- **Ranking.** When the scorer is wrong, the right tool is in its top five 98% of the time. The generator's beam-search alternatives are mostly respellings and comma-joined variants of its first guess, so its top-5 is only 93%.
 - **Hallucination.** Three more epochs cut the generator's invented-tool rate from 1.4% to 0.6%, but it still names a tool that isn't on the list three times in 500 decisions; the scorer cannot.
 - **Latency.** The scorer decides in 250 ms because it does one prefill and no decoding; the generator needs 575 ms (639 ms for the one-epoch checkpoint; same beam settings, so treat the difference as run-to-run laptop variance). On the laptop the prefill is 229 ms of that, tokenization 2 ms, and the per-candidate span pooling under 1 ms.
 
 ### 4.5 More epochs don't change the picture
 
 - **Scorer, 3 → 6 epochs.** Top-1 on the 500 steps went 66.6% → 65.8% while the training loss kept falling (0.43 → 0.29) and the seen/unseen split widened (71% / 38%). Overfitting, not headroom.
-- **Generator, 1 → 3 epochs.** Trained fresh for 3 epochs to match the scorer's budget, its training-time check went 31 → 73 → 75 → 77% and the 500-step numbers moved from 66.8% / 91.4% / 1.4% (1 epoch) to 66.0% / 93.8% / 0.6%. Top-1 is flat; the extra epochs buy a little top-5 and hallucination, not accuracy.
+- **Generator, 1 → 3 epochs.** Trained fresh for 3 epochs to match the scorer's budget, its training-time check went 31 → 73 → 75 → 77% and the 500-step numbers moved from 66.8% / 91.4% / 1.4% (1 epoch) to 66.0% / 93.4% / 0.6%. Top-1 is flat; the extra epochs buy a little top-5 and hallucination, not accuracy.
 - **Generator, 6 epochs.** A continuation run plateaued on the same check (72 → 73 → 75 → 74 → 73%) and its final checkpoint was lost to a reclaimed Colab session, so the 6-epoch comparison exists only for the scorer. Given both 3 → 6 curves are flat, I did not rerun it.
 
 ---
 
 ## 5. What I take from this
 
-**GenRec's argument transfers.** For choosing from a known action set, you don't need the LLM to write the answer. Once both approaches are trained the same way, scoring the candidates in one pass matches generation on accuracy and delivers the two properties the design promises: no out-of-catalog picks, and a single forward pass instead of decoding. It also produces a usable ranking, which matters for an agent that can retry.
+**GenRec's argument transfers, at least here.** For choosing from a known action set, you don't need the LLM to write the name. With matched backbone fine-tuning, scoring the candidates in one pass matches generation on accuracy and delivers the two properties the design promises: no out-of-catalog picks, and a single forward pass instead of decoding. It also produces a usable ranking, which matters for an agent that can retry.
 
-**The pooling position is not a detail.** GenRec says "a pooling position" and moves on. In my setup it was the difference between a scorer that could not be fine-tuned at all and one that reaches parity. My reading: mean pooling averages away whatever a low-rank adapter changes, while the last token is where a decoder-only model concentrates its decision, which is exactly why generation reads from there.
+**The pooling position is not a detail.** GenRec says "a pooling position" and moves on. In my setup it was the difference between a scorer that could not be fine-tuned at all and one that reaches parity. My reading, which the one controlled swap supports but does not prove: mean pooling averages away whatever a low-rank adapter changes, while the last token is where a decoder-only model concentrates its decision, which is exactly why generation reads from there.
 
 **Reading descriptions beats remembering them.** The table head, GenRec's per-item embedding, is at chance on tools with no training label, a quarter of the test set. Building each candidate's vector from its description inside the prompt (the span head) is what made the scorer competitive, and it is the part of the design closest to GenRec's own cold-start advice. The remaining gap to the generator lives entirely in that unseen-tool slice.
 
@@ -231,21 +232,25 @@ With last-token pooling, LoRA and the span head trained jointly (initialised fro
 
 ## 6. Limitations
 
-- **Small candidate lists.** They average 5.6 tools, so this is shortlist ranking, not full-catalog retrieval. The latency advantage of prefill-only scoring is *understated* relative to GenRec's setting, and the accuracy numbers are easier than a full-catalog task would be.
-- **One of everything.** One dataset, one backbone size, one training run per system, 500 evaluation steps. A sub-1-point gap is noise; the 7.5-point unseen-tool gap (121 steps) is probably real but wide.
+- **Small candidate lists.** They average about 6 tools, so this is shortlist ranking, not full-catalog retrieval. The latency advantage of prefill-only scoring is *understated* relative to GenRec's setting, and the accuracy numbers are easier than a full-catalog task would be.
+- **Evaluation subset overlap.** The 500 steps are the first 500 of the held-out split, and both training scripts log accuracy on a prefix of that split after each epoch (200 steps for the scorer, 100 for the generator). No checkpoint was chosen on those logs, but the numbers were visible while I made decisions, so the 500 is a development set, not a clean test set. On the 300 unmonitored steps (indices 200 to 499) the scorer scores 65.7% top-1 and the generator 62.7%, so the headline does not rest on the monitored prefix. The remaining held-out steps have never been evaluated by either final checkpoint, and from step 503 on they are trajectory-disjoint from the dev prefix; a pre-registered rerun there is the next step. They are not a pristine test set either: the frozen Tier 1 heads were evaluated on the full 1,855-step split (section 4.3 quotes those numbers), and those aggregate results informed the choice of span head and pooling, so a rerun is confirmatory, not independent.
+- **Tool-name selection only.** Neither system generates arguments. The latency and hallucination numbers cover choosing the tool, not producing a complete, valid call; a real agent still has to generate and validate arguments afterwards.
+- **Head pre-training is not matched.** The scorer's 3-epoch run starts from a head that already had up to 60 head-only epochs on cached vectors. The generator starts from the base model. Backbone fine-tuning is matched; total task-specific training is not.
+- **Beam search is a weak ranking baseline.** A constrained decoder restricted to candidate names, or scoring each candidate name's likelihood, would be a fairer zero-hallucination comparison for top-5 and latency.
+- **One of everything.** One dataset, one backbone size, one training run per system, 500 evaluation steps. A sub-1-point gap is noise; the 7.5-point gap on never-a-training-label tools (121 steps) is probably real but wide.
 - **Label noise.** Labels are what one reference agent did, and ToolBench's G1 trajectories often call a tool's endpoints in an arbitrary order, so top-1 has a ceiling well below 100% for any system.
-- **Hardware.** Latencies are from Apple Silicon at batch size 1; the ratio should hold elsewhere, the absolute numbers won't.
-- **Backbone size.** Everything is on a 1.5B model, and not every row would survive a scale-up the same way. The hallucination and latency gaps are structural: a scorer cannot name an off-list tool at any size, and the generator always pays for decoding on top of the same prefill. The untrained row is the most size-specific, since a strong model zero-shot would likely beat a frozen head outright. The unseen-tool gap is the one I'd expect to move: the span head scores a tool from the backbone's reading of its description line, and a bigger backbone reads descriptions better, so that 7.5-point lead for the generator could narrow or close.
+- **Hardware.** Latencies are from Apple Silicon at batch size 1. I expect the ratio to hold elsewhere, but I have not measured it; the absolute numbers won't transfer.
+- **Backbone size.** Everything is on a 1.5B model, and not every row would survive a scale-up the same way. The hallucination and latency gaps are structural: a scorer cannot name an off-list tool at any size, and the generator always pays for decoding on top of the same prefill. The untrained row is the most size-specific, since a strong model zero-shot would likely beat a frozen head outright. The unseen-tool gap is the one I'd expect to move: the span head scores a tool from the backbone's reading of its description line, and a bigger backbone reads descriptions better, so that 7.5-point lead for the generator might narrow. That is a hypothesis, not a result.
 
 ---
 
 ## 7. What I'd do next
 
 1. **Attack the unseen-tool gap directly**: a description-side objective so the span representation of a tool the model has never called still aligns with prompts that need it.
-2. **Score the full catalog, not the shortlist.** Drop the per-task candidate list and rank all 6,372 tools. With about 6 candidates, random guessing already gets 85% top-5, so the ranking metric is near its ceiling. Full-catalog retrieval is GenRec's real setting, and it is where a scorer that ranks everything in one pass should separate from a generator that spells one name. I'd run this before anything below.
+2. **Score the full catalog, not the shortlist.** Drop the per-task candidate list and rank all 6,372 tools. With about 6 candidates, random guessing already gets 83% top-5, so the ranking metric is near its ceiling. Full-catalog retrieval is GenRec's real setting, and it is where a scorer that ranks everything in one pass should separate from a generator that spells one name. I'd run this before anything below.
 3. **Move to ToolBench G3** (multi-tool tasks, longer histories). That is where the context pooling gets stressed and the "large catalog" motivation actually gets tested.
 4. **A larger backbone.** LoRA on a 4-bit 20B-class model fits one A100 for this data volume. Measure latency for both systems on the same GPU rather than the laptop. The question to answer is whether the unseen-tool gap closes once the backbone can read a tool description properly.
-5. **Three seeds** and the full 1,855-step held-out set for every row.
+5. **The 1,352 held-out steps outside the monitoring prefixes** for both final checkpoints, pre-registered with a trajectory-clustered bootstrap and a ±3-point equivalence margin (`docs/experiments/2026-09-16-unmonitored-holdout-rerun.md`). A truly untouched test needs a predeclared train/dev/test split and retraining. Then **three seeds** for every row.
 6. **A constrained-decoding generator baseline**, so its hallucination rate is also zero and the comparison isolates ranking quality and latency.
 
 ---

@@ -151,3 +151,32 @@ def test_evaluate_actionrank_uses_rank_example_contract():
     ex = [Example("1", "q", (), ("b", "Finish"), "Finish")]
     m, preds = evaluate_actionrank(FakeModel(), ex, cat, load_config(), "fake")
     assert m.top1 == 1.0 and preds[0]["top1"] == "Finish"
+
+
+def test_top5_is_a_strict_five_item_list_not_a_union():
+    # greedy answer 'a' plus five beams: only four beams fit in the five-item list, so 'z' (fifth beam) is a miss
+    m = compute_metrics("s", ["z"], ["a"], [("b", "c", "d", "e", "z")], [True], None)
+    assert m.top5 == 0.0
+
+
+def test_top5_dedupes_top1_from_beam_list():
+    # beam list repeats the greedy answer; the duplicate must not consume a slot
+    m = compute_metrics("s", ["z"], ["a"], [("a", "b", "c", "d", "z")], [True], None)
+    assert m.top5 == 1.0
+
+
+def test_select_eval_slices_by_offset_and_limit():
+    from eval import select_eval
+
+    steps = list("abcdefgh")
+    assert select_eval(steps, offset=0, limit=3) == list("abc")
+    assert select_eval(steps, offset=5, limit=None) == list("fgh")
+    assert select_eval(steps, offset=6, limit=10) == list("gh")
+
+
+def test_select_eval_rejects_offset_past_end():
+    import pytest
+    from eval import select_eval
+
+    with pytest.raises(ValueError):
+        select_eval(list("abc"), offset=3, limit=None)
