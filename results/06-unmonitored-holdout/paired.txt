@@ -1,0 +1,6 @@
+n = 1352 steps, 371 trajectories
+top-1: first 63.5%  second 68.3%  difference -4.8 pt
+paired: both 743, only first 115, only second 180, neither 314
+trajectory-clustered bootstrap 95% CI for the difference: [-7.3, -2.4] pt
+equivalence margin ±3 pt -> inconclusive
+secondary, step-level exact McNemar p = 0.000
