@@ -67,6 +67,8 @@ class Tier2Config:
     max_train_examples: int
     checkpoint_dir: str
     train_seed: int | None = None  # shuffle order + LoRA init; None falls back to data.split_seed
+    lm_weight: float = 0.0  # GenRec Phase 2: add lm_weight * next-token loss over the verbalized prompt + answer
+    lm_scope: str = "all"  # all = prompt and answer tokens (GenRec's 'inputs and outputs'); answer = answer tokens only
 
 
 @dataclass(frozen=True)

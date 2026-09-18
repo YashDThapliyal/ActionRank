@@ -177,6 +177,71 @@ def encode_with_spans(tokenizer, backbone, prompts: Sequence[str], spans: Sequen
     return query, tools
 
 
+IGNORE_INDEX = -100
+
+
+def build_joint_batch(tokenizer, prompts: Sequence[str], answers: Sequence[str], max_tokens: int,
+                      lm_scope: str = "all") -> dict[str, Tensor]:
+    """Prompt (left-truncated to max_tokens, as in inference) followed by the answer tokens and EOS, right padded.
+
+    Returns input_ids, attention_mask, labels (IGNORE_INDEX where not supervised), prompt_len [B] and the
+    prompt token offsets [B, Tp, 2] (zero beyond the prompt) so span pooling can stay on prompt positions.
+    lm_scope 'all' supervises every real token (GenRec's LM objective over inputs and outputs); 'answer'
+    supervises only the answer and EOS."""
+    if lm_scope not in ("all", "answer"):
+        raise ValueError(f"lm_scope must be 'all' or 'answer', got {lm_scope!r}")
+    tokenizer.padding_side = "right"
+    tokenizer.truncation_side = "left"
+    pb = tokenizer(list(prompts), return_tensors="pt", padding=True, truncation=True, max_length=max_tokens,
+                   return_offsets_mapping=True)
+    offsets = pb["offset_mapping"]
+    prompt_len = pb["attention_mask"].sum(dim=1)
+    answer_ids = [tokenizer(a, add_special_tokens=False)["input_ids"] + [tokenizer.eos_token_id] for a in answers]
+    width = max(int(prompt_len[i]) + len(answer_ids[i]) for i in range(len(prompts)))
+    pad = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    input_ids = torch.full((len(prompts), width), pad, dtype=torch.long)
+    attention = torch.zeros((len(prompts), width), dtype=torch.long)
+    labels = torch.full((len(prompts), width), IGNORE_INDEX, dtype=torch.long)
+    for i in range(len(prompts)):
+        plen = int(prompt_len[i])
+        seq = pb["input_ids"][i, :plen].tolist() + answer_ids[i]
+        input_ids[i, :len(seq)] = torch.tensor(seq)
+        attention[i, :len(seq)] = 1
+        if lm_scope == "all":
+            labels[i, :len(seq)] = torch.tensor(seq)
+        else:
+            labels[i, plen:len(seq)] = torch.tensor(answer_ids[i])
+    return {"input_ids": input_ids, "attention_mask": attention, "labels": labels,
+            "prompt_len": prompt_len, "offset_mapping": offsets}
+
+
+def encode_with_spans_lm(tokenizer, backbone, prompts: Sequence[str], spans: Sequence[Sequence[tuple[int, int]]],
+                         answers: Sequence[str], cfg: ModelConfig, lm_scope: str = "all") -> tuple[Tensor, list[Tensor], Tensor]:
+    """One forward pass over prompt + answer. The pooled query and the candidate span vectors are read from
+    prompt positions only (causal attention keeps them independent of the answer), and the LM head gives the
+    next-token loss. Returns (query [B, D], per-example span vectors, lm_loss scalar)."""
+    device = next(backbone.parameters()).device
+    batch = build_joint_batch(tokenizer, prompts, answers, cfg.max_prompt_tokens, lm_scope)
+    input_ids, attention = batch["input_ids"].to(device), batch["attention_mask"].to(device)
+    hidden = backbone.get_decoder()(input_ids=input_ids, attention_mask=attention).last_hidden_state
+    total = hidden.shape[1]
+    prompt_mask = torch.zeros_like(attention)
+    for i, plen in enumerate(batch["prompt_len"].tolist()):
+        prompt_mask[i, :plen] = 1
+    query = pool_hidden(hidden, prompt_mask, cfg.pooling)
+    tools = []
+    for i in range(len(prompts)):
+        mask = span_token_mask(batch["offset_mapping"][i], spans[i])
+        padded = torch.zeros(mask.shape[0], total, dtype=mask.dtype)
+        padded[:, :mask.shape[1]] = mask
+        tools.append(pool_spans(hidden[i], padded))
+    logits = backbone.get_output_embeddings()(hidden)
+    shift_logits = logits[:, :-1].reshape(-1, logits.shape[-1]).to(torch.float32)
+    shift_labels = batch["labels"][:, 1:].reshape(-1).to(device)
+    lm_loss = nn.functional.cross_entropy(shift_logits, shift_labels, ignore_index=IGNORE_INDEX)
+    return query, tools, lm_loss
+
+
 class SpanScoringHead(nn.Module):
     """score(q, tool_k) = cos(q + mlp(q), t_k + mlp'(t_k)) / temperature for the K candidate spans of a prompt,
     scattered into catalog-width logits (-inf everywhere else). Both projections are residual with
@@ -267,6 +332,19 @@ class SpanActionRankModel(nn.Module):
         padded, mask, idx = pad_tool_vectors(tools, examples, self.catalog)
         head_device = self.head.proj[0].weight.device
         return self.head(q.to(head_device), padded.to(head_device), mask, idx, len(self.catalog))
+
+    def forward_with_lm(self, examples: Sequence[Example], verbalize_cfg, lm_scope: str = "all") -> tuple[Tensor, Tensor]:
+        """Training-only joint pass: catalog-width ranking logits plus the next-token loss over the
+        verbalized prompt and the label (GenRec's Phase 2 objective). Inference never calls this."""
+        from verbalize import build_prompt_with_spans
+
+        rendered = [build_prompt_with_spans(ex, self.catalog, verbalize_cfg) for ex in examples]
+        answers = [f" {ex.label}" for ex in examples]
+        q, tools, lm_loss = encode_with_spans_lm(self.tokenizer, self.backbone, [r[0] for r in rendered],
+                                                 [r[1] for r in rendered], answers, self.cfg, lm_scope)
+        padded, mask, idx = pad_tool_vectors(tools, examples, self.catalog)
+        head_device = self.head.proj[0].weight.device
+        return self.head(q.to(head_device), padded.to(head_device), mask, idx, len(self.catalog)), lm_loss
 
     @torch.no_grad()
     def rank_example(self, example: Example, catalog: Catalog, k: int, verbalize_cfg=None) -> tuple[int, ...]:

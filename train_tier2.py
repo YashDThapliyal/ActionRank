@@ -85,6 +85,26 @@ def _init_span_head(cfg: Config, catalog: Catalog, hidden_dim: int) -> SpanScori
     return SpanScoringHead(hidden_dim, cfg.model.head_hidden, cfg.model.score_temperature)
 
 
+def check_joint_config(cfg: Config) -> None:
+    """The joint ranking + LM objective is implemented for the span head only."""
+    if cfg.tier2.lm_weight < 0:
+        raise ValueError("tier2.lm_weight must be >= 0")
+    if cfg.tier2.lm_weight > 0 and cfg.tier2.head != "span":
+        raise ValueError("tier2.lm_weight > 0 requires tier2.head == 'span'")
+
+
+def tier2_losses(model, batch: Sequence[Example], catalog: Catalog, cfg: Config) -> tuple[Tensor, Tensor | None]:
+    """Ranking cross-entropy over the candidate set, plus the LM loss when tier2.lm_weight > 0."""
+    labels = labels_tensor(batch, catalog)
+    if cfg.tier2.lm_weight > 0:
+        mask = build_candidate_mask(batch, catalog)
+        logits, lm_loss = model.forward_with_lm(batch, cfg.verbalize, cfg.tier2.lm_scope)
+        logits = logits.masked_fill(~mask.to(logits.device), float("-inf"))
+        return torch.nn.functional.cross_entropy(logits, labels.to(logits.device)), lm_loss
+    logits = tier2_logits(model, batch, catalog, cfg, grad=True)
+    return torch.nn.functional.cross_entropy(logits, labels.to(logits.device)), None
+
+
 def tier2_logits(model, batch: Sequence[Example], catalog: Catalog, cfg: Config, grad: bool) -> Tensor:
     """Catalog-width logits for a batch from either model type (table head or span head)."""
     mask = build_candidate_mask(batch, catalog)
@@ -124,8 +144,8 @@ def _train_epoch(model: ActionRankModel, optimizer, examples: Sequence[Example],
     model.train()
     optimizer.zero_grad(set_to_none=True)
     for step, batch in enumerate(tqdm(batches, desc="tier2 train", leave=False), start=1):
-        logits = tier2_logits(model, batch, catalog, cfg, grad=True)
-        loss = torch.nn.functional.cross_entropy(logits, labels_tensor(batch, catalog).to(logits.device))
+        rank_loss, lm_loss = tier2_losses(model, batch, catalog, cfg)
+        loss = rank_loss if lm_loss is None else rank_loss + t2.lm_weight * lm_loss
         (loss / t2.grad_accum).backward()
         losses.append(loss.item())
         if step % t2.grad_accum == 0 or step == len(batches):
@@ -141,6 +161,7 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
     `resume` continues from a previous Tier 2 checkpoint directory (adapter + head) instead of starting
     from a fresh adapter and the Tier 1 head; the optimizer state is not restored."""
     t2 = cfg.tier2
+    check_joint_config(cfg)
     train_ex = ds.train[:limit or t2.max_train_examples]
     eval_ex = ds.eval[:EVAL_SUBSET]
     if resume is not None:
@@ -165,8 +186,8 @@ def train_tier2(ds: Dataset, cfg: Config, tokenizer, backbone, limit: int | None
         raise ValueError(f"tier2.head must be 'table' or 'span', got {t2.head!r}")
     params = [p for p in peft_model.parameters() if p.requires_grad] + list(head.parameters())
     optimizer = torch.optim.AdamW(params, lr=t2.lr)
-    log.info("device %s; trainable fraction of backbone: %.4f; train examples %d",
-             device, trainable_fraction(peft_model), len(train_ex))
+    log.info("device %s; trainable fraction of backbone: %.4f; train examples %d; lm_weight %.2f (%s)",
+             device, trainable_fraction(peft_model), len(train_ex), t2.lm_weight, t2.lm_scope)
     history: dict[str, list] = {"train_loss": [], "step_losses": [], "optimizer_steps_per_epoch": [],
                                 "eval_top1": [_eval_top1(model, eval_ex, ds.catalog, cfg)]}
     log.info("eval top1 before training: %.4f", history["eval_top1"][0])

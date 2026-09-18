@@ -57,3 +57,9 @@ def test_train_seed_loads_when_present(tmp_path):
     path = tmp_path / "c.yaml"
     path.write_text(yaml.safe_dump(raw))
     assert load_config(path).tier2.train_seed == 7
+
+
+def test_lm_weight_and_scope_default_to_off():
+    cfg = load_config()
+    assert cfg.tier2.lm_weight == 0.0
+    assert cfg.tier2.lm_scope == "all"

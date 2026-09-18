@@ -1,0 +1,60 @@
+# Experiment A, Arm J, seed 3: the final span scorer recipe (LoRA + span head, last-token pooling, 3 epochs)
+# trained with GenRec's Phase 2 objective: ranking cross-entropy plus next-token loss over prompt + answer.
+data:
+  hf_repo: Adorg/ToolBench
+  subset: G1
+  raw_dir: data/raw
+  processed_dir: data/processed
+  eval_fraction: 0.15
+  split_seed: 13
+  require_win: true
+  max_files: null          # null = all files; set small for smoke runs
+verbalize:
+  full_history_steps: 3    # last K steps rendered in full; older steps collapsed
+  observation_chars: 200
+  args_chars: 120
+  description_chars: 200
+model:
+  backbone: Qwen/Qwen2.5-1.5B-Instruct
+  device: mps              # mps | cuda | cpu (Colab: cuda)
+  dtype: float16
+  pooling: last            # variant: last-token pooling
+  max_prompt_tokens: 1280
+  head_hidden: 2048
+  score_temperature: 0.05
+  tool_init: text          # text = initialise tool embeddings from encoded descriptions; random
+tier1:
+  head: span              # table = learned per-tool table; span = pool each candidate's line in the prompt
+  cache_dir: cache/last
+  cache_batch_size: 16
+  epochs: 60
+  batch_size: 256
+  lr: 0.001
+  weight_decay: 0.01
+  checkpoint: checkpoints/last/tier1_head.pt
+  span_checkpoint: checkpoints/last/tier1_span_head.pt
+tier2:
+  head: span              # table | span: which scoring head is fine-tuned jointly with LoRA
+  lora_rank: 8
+  lora_alpha: 16
+  lora_dropout: 0.05
+  lr: 0.0002
+  epochs: 3
+  batch_size: 8             # A100
+  grad_accum: 2             # effective batch 16, as in every run
+  max_train_examples: 10568
+  checkpoint_dir: checkpoints/genrec/joint_s3
+  lm_weight: 1.0             # GenRec Phase 2: ranking + LM loss
+  lm_scope: all              # LM loss over the verbalized prompt and the answer
+  train_seed: 3
+baseline:
+  max_new_tokens: 32
+  num_beams: 5
+  sft_epochs: 1            # fine-tuned generation baseline: LoRA with the tier2 rank/lr; effective batch 16
+  sft_batch_size: 1        # batch 1 + bucketed padding keeps the MPS allocator stable over a long run
+  sft_grad_accum: 16
+  sft_checkpoint_dir: checkpoints/baseline_sft
+eval:
+  max_eval_examples: 500
+  results_dir: results/08-genrec-joint/joint_s3
+  latency_warmup: 3
