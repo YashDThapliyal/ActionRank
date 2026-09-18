@@ -83,3 +83,24 @@ Written before running.
 - The strict top-5 change does not alter scorer rows.
 - The expectations and the decision rule above predate the run: this file, the config, `eval.py` and `scripts/paired_test.py` are committed before the results directory exists.
 - Whether 371 trajectories is enough for a ±3 margin. It may not be; that is what "inconclusive" is for.
+
+## Outcome (added 2026-09-17, after the run)
+
+Run on 2026-09-16 22:11 to 23:11 PDT on the laptop, exactly as specified above. Results in `results/06-unmonitored-holdout/`.
+
+| quantity | expected | observed | met? |
+|---|---|---|---|
+| scorer top-1 | 62% to 68% | 63.5% | yes |
+| generator top-1 | 60% to 67% | 68.3% | no, above range |
+| top-1 difference | point estimate within ±2; CI inside ±3 if near 0 | −4.8, CI [−7.3, −2.3] | no; verdict **inconclusive** under the margin rule, direction clear |
+| scorer top-5 (strict) | 96% to 99% | 97.5% | yes |
+| generator top-5 (strict) | 90% to 95%, gap ≥ 3 | 92.2%, gap 5.3 | yes |
+| scorer hallucination | 0.0% | 0.0% | yes |
+| generator hallucination | 0.3% to 1.5% | 0.9% | yes |
+| latency ratio | about 2x or more | 251 / 632 ms, 2.5x | yes |
+| never-label tools | generator ahead by 4 to 10 | 55.0% vs 46.8%, 8.2 | yes |
+| `Finish` recall | scorer ahead | 77.2% vs 78.2%, level | no |
+
+The dev-set tie did not replicate. The scorer's dev-set parity came from a `Finish`-recall edge (88% vs 78% on the 500) that was absent on the 1,352. Per the "generator better" branch above, the README headline and the blog were rewritten.
+
+**Follow-up, not pre-registered:** two more training seeds per system (`configs/seeds/`, `results/07-seeds/`; a `train_seed` field was added since the LoRA initialisation had been unseeded). Top-1 on the same 1,352 steps: scorer 63.5 / 62.4 / 61.8, generator 68.3 / 68.2 / 63.4. Generator seed 3's drop is entirely `Finish` recall (62% vs 78% and 91%); its non-`Finish` accuracy matches the other seeds. Six of nine pairings favour the generator with clustered CIs clear of zero; the three involving generator seed 3 are equivalent or inconclusive. Mean gap 4.1 points overall, about 6 on non-`Finish` steps. The seed evaluations ran on an A100, so their latency columns are not comparable and are not reported.
