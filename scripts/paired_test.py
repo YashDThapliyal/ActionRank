@@ -25,6 +25,29 @@ def _hits(preds: Sequence[dict]) -> list[bool]:
     return [p["top1"] == p["label"] for p in preds]
 
 
+RANK_K = 5
+
+
+def reciprocal_rank(pred: dict, k: int = RANK_K) -> float:
+    """1 / rank of the label in the system's strict k-item list (its top-1, then distinct topk entries);
+    0 if the label is not in it. Same list definition as eval.py's top-5."""
+    ranked = [pred["top1"]]
+    for cand in pred["topk"]:
+        if cand not in ranked:
+            ranked.append(cand)
+    ranked = ranked[:k]
+    return 1.0 / (ranked.index(pred["label"]) + 1) if pred["label"] in ranked else 0.0
+
+
+def metric_values(preds: Sequence[dict], metric: str) -> list[float]:
+    """Per-step value of the chosen metric: 'top1' (0/1 hit) or 'mrr' (reciprocal rank at 5)."""
+    if metric == "top1":
+        return [float(p["top1"] == p["label"]) for p in preds]
+    if metric == "mrr":
+        return [reciprocal_rank(p) for p in preds]
+    raise ValueError(f"metric must be 'top1' or 'mrr', got {metric!r}")
+
+
 def _check_aligned(a: Sequence[dict], b: Sequence[dict]) -> None:
     if len(a) != len(b):
         raise ValueError(f"prediction files differ in length: {len(a)} vs {len(b)}")
@@ -54,14 +77,15 @@ def mcnemar_exact(only_a: int, only_b: int) -> float:
 
 
 def cluster_bootstrap_ci(a: Sequence[dict], b: Sequence[dict], n_boot: int = 2000, seed: int = 0,
-                         alpha: float = 0.05) -> tuple[float, float]:
-    """95% percentile CI, in percentage points, for mean(top-1 a) - mean(top-1 b), resampling trajectories."""
+                         alpha: float = 0.05, metric: str = "top1") -> tuple[float, float]:
+    """95% percentile CI for mean(metric a) - mean(metric b), x100, resampling trajectories.
+    For top-1 that is percentage points; for MRR it is MRR x 100."""
     _check_aligned(a, b)
     by_traj: dict[str, list[int]] = defaultdict(list)
     for i, p in enumerate(a):
         by_traj[p["query_id"]].append(i)
     trajs = list(by_traj)
-    ha, hb = _hits(a), _hits(b)
+    ha, hb = metric_values(a, metric), metric_values(b, metric)
     diff_by_traj = {t: sum(ha[i] - hb[i] for i in idx) for t, idx in by_traj.items()}
     size_by_traj = {t: len(idx) for t, idx in by_traj.items()}
     rng = random.Random(seed)
@@ -106,6 +130,10 @@ def main() -> None:
     print(f"trajectory-clustered bootstrap 95% CI for the difference: [{lo:+.1f}, {hi:+.1f}] pt")
     print(f"equivalence margin ±{args.margin:g} pt -> {verdict((lo, hi), args.margin)}")
     print(f"secondary, step-level exact McNemar p = {mcnemar_exact(only_a, only_b):.3f}")
+    mrr_a, mrr_b = sum(metric_values(a, "mrr")) / n, sum(metric_values(b, "mrr")) / n
+    mlo, mhi = cluster_bootstrap_ci(a, b, n_boot=args.boot, seed=args.seed, metric="mrr")
+    print(f"MRR@{RANK_K}: first {mrr_a:.3f}  second {mrr_b:.3f}  difference {mrr_a - mrr_b:+.3f}  "
+          f"clustered 95% CI [{mlo / 100:+.3f}, {mhi / 100:+.3f}]")
 
 
 if __name__ == "__main__":

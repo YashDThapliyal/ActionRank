@@ -11,7 +11,7 @@ Netflix's recommendation team recently argued, in [GenRec](https://netflixtechbl
 - **The generator is still more accurate, by less than it first looked.** Trained with GenRec's full Phase 2 objective (ranking loss plus a language-modeling loss), the scorer reaches **64.0%** top-1 against the generator's **66.6%**, a gap of about 2.6 points. With the ranking loss alone it was 62.6%, a gap of 4.1. On the steps where an actual tool is chosen, the gap is about 4 points.
 - **The missing loss term explains part of the gap, and it helps where GenRec says it should.** On tools that were never a training label the scorer went from 44% to 49% (51% on two of three seeds); the generator is at 54%. On tools it trained on, the LM term barely moved it.
 - **Never an invented tool.** The scorer cannot pick a tool that isn't offered (**0%** on every seed); the fine-tuned generator names a tool that doesn't exist about **0.9%** of the time.
-- **A far better ranking.** The right tool is in the scorer's top five **97 to 98%** of the time, vs. **91%** for the generator.
+- **A far better ranking, and level on GenRec's own metric.** The right tool is in the scorer's top five **97 to 98%** of the time, vs. **91%** for the generator. On Mean Reciprocal Rank, the offline metric GenRec reports, the two are level: **0.778 vs. 0.764** MRR@5, with no seed pairing favouring the generator and three of nine favouring the scorer.
 - **Less than half the latency.** **256 ms vs. 632 ms** per decision on the laptop, because there is one prefill and no decoding.
 - **More stable.** Scorer seeds land within 2 points of each other; the generator's span 5, almost entirely from how reliably each seed learns to stop.
 - **The detour.** The scorer's fine-tuning did nothing until I changed one detail of how the prompt is pooled.
@@ -46,6 +46,7 @@ The rest of this report is how I got each of those numbers and what I think they
 
 - **Top-1** is how often the system's single best guess is the correct tool. This is the number that matters for an agent that simply executes its first choice.
 - **Top-5** is how often the correct tool is anywhere in the system's five best guesses. For the generator that list is the greedy answer plus four distinct beam-search alternatives. It measures how good the *ranking* is, which matters if you retry after a failed call, re-rank with a second model, or show alternatives.
+- **MRR@5** (Mean Reciprocal Rank) is the average of 1/rank of the correct tool in that five-item list, 0 if it is absent. It is the offline metric GenRec reports, and it credits a system for putting the right tool second or third rather than only first.
 - **Hallucination rate** is how often the system names a tool that isn't on the task's candidate list at all. A generated name can be misspelled, made up, or a tool from a different task. A scorer can only choose from the list, so its rate is 0% by construction.
 - **Latency** is wall-clock time for one decision, including prompt building and tokenization.
 
@@ -56,13 +57,13 @@ The rest of this report is how I got each of those numbers and what I think they
 
 **The results**, every system fine-tuned with the same LoRA configuration for three epochs, three seeds each, on the 1,352 unmonitored held-out steps. Mean over seeds, with the seed range in brackets. Latency is measured on the laptop; seed replicates were evaluated on an A100 and are not timed.
 
-| system | training objective | top-1 | top-1, tool-choice steps only | top-5 | hallucination rate | latency / decision |
-|---|---|---:|---:|---:|---:|---:|
-| Generation, fine-tuned | next-token (answer only) | **66.6%** [63.4, 68.3] | **62.7%** [59.7, 64.5] | 90.7% [89.5, 92.2] | 0.9% [0.9, 1.0] | 632 ms |
-| ActionRank, fine-tuned | ranking only | 62.6% [61.8, 63.5] | 56.6% [54.5, 58.3] | 97.2% [97.0, 97.5] | **0.0%** | 251 ms |
-| **ActionRank, fine-tuned, GenRec's full objective** | ranking + language modeling | 64.0% [63.0, 65.0] | 58.7% [55.7, 60.6] | **97.5%** [97.0, 98.0] | **0.0%** | **256 ms** |
+| system | training objective | top-1 | top-1, tool-choice steps only | MRR@5 | top-5 | hallucination rate | latency / decision |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Generation, fine-tuned | next-token (answer only) | **66.6%** [63.4, 68.3] | **62.7%** [59.7, 64.5] | 0.764 [0.736, 0.780] | 90.7% [89.5, 92.2] | 0.9% [0.9, 1.0] | 632 ms |
+| ActionRank, fine-tuned | ranking only | 62.6% [61.8, 63.5] | 56.6% [54.5, 58.3] | 0.768 [0.764, 0.774] | 97.2% [97.0, 97.5] | **0.0%** | 251 ms |
+| **ActionRank, fine-tuned, GenRec's full objective** | ranking + language modeling | 64.0% [63.0, 65.0] | 58.7% [55.7, 60.6] | **0.778** [0.775, 0.782] | **97.5%** [97.0, 98.0] | **0.0%** | 256 ms |
 
-With GenRec's full Phase 2 objective the generator is more accurate by about 2.6 points overall and 4 points on steps where a tool (not `Finish`) is the answer; with the ranking loss alone the gaps were 4.1 and 6. Under the pre-registered rule (trajectory-clustered 95% CI inside ±3 points), no seed pairing of the full-objective scorer against the generator is decisive in either direction. The scorer never picks an off-list tool, ranks the alternatives far better, decides in less than half the time, and varies less across seeds. That is the trade.
+With GenRec's full Phase 2 objective the generator is more accurate by about 2.6 points overall and 4 points on steps where a tool (not `Finish`) is the answer; with the ranking loss alone the gaps were 4.1 and 6. Under the pre-registered rule (trajectory-clustered 95% CI inside ±3 points), no seed pairing of the full-objective scorer against the generator is decisive in either direction. On MRR@5 the two are level: against generator seeds 1 and 2 every difference is within ±0.006 with intervals straddling zero, and against generator seed 3 the scorer leads by about 0.04. The scorer never picks an off-list tool, ranks the alternatives far better, decides in less than half the time, and varies less across seeds. That is the trade.
 
 **Development history.** The first version of this report used the 500-step development set below and called top-1 a tie. Both training scripts had logged accuracy on a prefix of those steps, and the scorer's edge there came from `Finish` recall that did not carry over. Section 4.6 has the rerun and the seeds.
 
@@ -153,7 +154,7 @@ A prediction is a *hallucination* if the name isn't on the task's candidate list
 
 ### Metrics
 
-Top-1 and top-5 accuracy against the reference agent's next call, hallucination rate, and wall-clock latency per decision measured identically for every system (prompt building, tokenization, and the model call, at batch size 1; the beam pass is not timed). Top-5 is over a strict five-item list: the greedy answer followed by distinct beam outputs. The saved `results*.md` files were written by an earlier evaluator that credited the greedy answer *or* any of five beams (up to six guesses); the generator rows below are recomputed from the prediction files with the strict definition, which lowers the prompted generator from 53.4% to 52.8%, the 3-epoch generator from 93.8% to 93.4%, and random from 85.0% to 83.4%. Scorer rows are unchanged, since their list starts with their top-1.
+Top-1 and top-5 accuracy against the reference agent's next call, hallucination rate, and wall-clock latency per decision measured identically for every system (prompt building, tokenization, and the model call, at batch size 1; the beam pass is not timed). Top-5 and MRR@5 are over a strict five-item list: the system's top-1 followed by its distinct ranked alternatives (for the generator, the greedy answer followed by distinct beam outputs). MRR@5 is the mean of 1/rank of the label in that list, 0 when absent; it is GenRec's offline metric and was added after the fact from the saved prediction files (`scripts/paired_test.py`), so it was not part of either pre-registration. The saved `results*.md` files were written by an earlier evaluator that credited the greedy answer *or* any of five beams (up to six guesses); the generator rows below are recomputed from the prediction files with the strict definition, which lowers the prompted generator from 53.4% to 52.8%, the 3-epoch generator from 93.8% to 93.4%, and random from 85.0% to 83.4%. Scorer rows are unchanged, since their list starts with their top-1.
 
 ---
 
@@ -253,7 +254,7 @@ All nine scorer-versus-generator pairings, scorer minus generator, trajectory-cl
 
 Six of nine pairings favour the generator with intervals clear of zero; the three involving generator seed 3 are a tie or inconclusive. On non-`Finish` steps, the generator leads on every pairing. Everything the scorer was built for held on every seed: hallucination 0.0%, top-5 97.0 to 97.5% against 89.5 to 92.2%, and the latency ratio from the laptop run. On tools that were never a training label the generator's lead is 8 to 10 points on every seed (mean 53.8% vs. 44.2%).
 
-Per-seed tables are in `results/06-unmonitored-holdout/` and `results/07-seeds/`; `scripts/paired_test.py` reproduces the pairings.
+Per-seed tables are in `results/06-unmonitored-holdout/` and `results/07-seeds/`; `scripts/paired_test.py` reproduces the pairings and prints MRR@5 with its clustered interval.
 
 ### 4.7 Giving the scorer the rest of GenRec's recipe
 
@@ -269,6 +270,7 @@ The pre-registered fix (`docs/experiments/2026-09-18-genrec-two-phase-training.m
 
 - **The LM term helps, and it helps where GenRec says it should.** Mean top-1 +1.4 points; on tools that were never a training label, two seeds gained 7 points (44 to 51%) and one did not move. That slice is the reading-the-description problem the LM objective targets, and on it the full-objective scorer is now within 3 points of the generator's mean instead of 10. On tools the model trained on, the gain is under a point.
 - **The gap narrows from 4.1 to 2.6 points and stops being decisive.** All nine pairings of full-objective scorer seeds against generator seeds are *inconclusive* under the ±3 margin: six exclude zero in the generator's favour (worst −5.3, best −3.2), three straddle it (+1.6 to −0.4 against generator seed 3). Where the ranking-only scorer lost four of nine pairings outright, the full-objective scorer loses none outright and wins none.
+- **On GenRec's metric the scorer is level with the generator.** MRR@5 is 0.778 for the full-objective scorer (0.775 to 0.782 by seed), 0.768 for the ranking-only scorer, and 0.764 for the generator (0.736 to 0.780). Across the nine full-objective pairings, none favours the generator, six straddle zero (every difference within ±0.006), and the three against generator seed 3 favour the scorer by about 0.04 with intervals clear of zero. The generator's first guess is right more often; when it is wrong, its alternatives are mostly respellings, while the scorer's second and third choices are real candidates, and MRR credits that.
 - **The structural results are unchanged**: 0.0% hallucination on every seed, top-5 97.0 to 98.0%, and the same inference cost (256 ms on the laptop, one prefill).
 - **What is left** is a 2 to 4 point deficit concentrated on tools the model trained on and on non-`Finish` steps. The LM loss does not touch that; GenRec's Phase 1, more data, or a larger backbone might. Those are future work.
 
@@ -278,7 +280,7 @@ Results are in `results/08-genrec-joint/`. The pre-registration document records
 
 ## 5. What I take from this
 
-**Scoring is a trade, not a free win.** GenRec's structural promises transfer exactly: a scorer cannot pick an off-catalog tool, it ranks every candidate from one forward pass, and it decides in less than half the time. What did not fully transfer is accuracy parity. With GenRec's full Phase 2 objective and three seeds, generating the name is still about 2.6 points more accurate overall and about 4 on steps where a tool (not `Finish`) is the answer, though no seed pairing is decisive under the pre-registered margin. Whether that is a good trade depends on the agent: one that retries from a ranking, or that cannot afford an invalid call, gets a lot for 4 points; one that executes its first choice and can validate names cheaply gets less.
+**Scoring is a trade, not a free win.** GenRec's structural promises transfer exactly: a scorer cannot pick an off-catalog tool, it ranks every candidate from one forward pass, and it decides in less than half the time. What did not fully transfer is accuracy parity. With GenRec's full Phase 2 objective and three seeds, generating the name is still about 2.6 points more accurate overall and about 4 on steps where a tool (not `Finish`) is the answer, though no seed pairing is decisive under the pre-registered margin, and on MRR, the ranking metric GenRec itself reports, the two are level. Whether that is a good trade depends on the agent: one that retries from a ranking, or that cannot afford an invalid call, gets a lot for 4 points; one that executes its first choice and can validate names cheaply gets less.
 
 **Evaluate on data nobody looked at, replicate, then re-read the paper.** The tie I first reported was real on the development set and gone on untouched steps, because a `Finish`-recall edge specific to those 500 steps did not generalise. Seeds then showed that the generator's own number swings by 5 points depending on how well a run learns to stop. And going back to GenRec's text line by line turned up a loss term I had dropped, which recovered a third of the remaining gap. None of that was visible from one run on one slice.
 

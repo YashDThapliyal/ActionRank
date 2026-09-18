@@ -54,3 +54,28 @@ def test_load_predictions_reads_jsonl(tmp_path):
     p = tmp_path / "predictions_x.jsonl"
     p.write_text(json.dumps({"query_id": "1", "label": "a", "top1": "a", "topk": ["a"], "valid": True}) + "\n")
     assert load_predictions(p)[0]["top1"] == "a"
+
+
+def test_reciprocal_rank_uses_top1_then_distinct_topk_cut_to_k():
+    from scripts.paired_test import reciprocal_rank
+
+    assert reciprocal_rank({"label": "a", "top1": "a", "topk": ["a", "b"]}) == 1.0
+    assert reciprocal_rank({"label": "b", "top1": "a", "topk": ["a", "b", "c"]}) == 0.5  # duplicate top1 takes no slot
+    assert reciprocal_rank({"label": "c", "top1": "a", "topk": ["b", "c"]}) == 1 / 3
+    assert reciprocal_rank({"label": "z", "top1": "a", "topk": ["b", "c", "d", "e", "z"]}) == 0.0  # sixth guess does not count
+    assert reciprocal_rank({"label": "q", "top1": "a", "topk": ["b"]}) == 0.0
+
+
+def test_metric_values_selects_top1_or_mrr():
+    from scripts.paired_test import metric_values
+
+    preds = [{"query_id": "1", "label": "b", "top1": "a", "topk": ["a", "b"]}]
+    assert metric_values(preds, "top1") == [0.0]
+    assert metric_values(preds, "mrr") == [0.5]
+
+
+def test_cluster_bootstrap_ci_supports_mrr():
+    a = [{"query_id": str(i // 2), "label": "b", "top1": "b", "topk": ["b", "a"]} for i in range(20)]
+    b = [{"query_id": str(i // 2), "label": "b", "top1": "a", "topk": ["a", "b"]} for i in range(20)]
+    lo, hi = cluster_bootstrap_ci(a, b, n_boot=200, seed=0, metric="mrr")
+    assert lo == hi == 50.0  # every step differs by exactly 0.5, reported x100
