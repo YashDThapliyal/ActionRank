@@ -92,7 +92,7 @@ Run on 2026-09-16 22:11 to 23:11 PDT on the laptop, exactly as specified above. 
 |---|---|---|---|
 | scorer top-1 | 62% to 68% | 63.5% | yes |
 | generator top-1 | 60% to 67% | 68.3% | no, above range |
-| top-1 difference | point estimate within ±2; CI inside ±3 if near 0 | −4.8, CI [−7.3, −2.3] | no; verdict **inconclusive** under the margin rule, direction clear |
+| top-1 difference | point estimate within ±2; CI inside ±3 if near 0 | −4.8, CI [−7.3, −2.4] | no; verdict **inconclusive** under the margin rule, direction clear |
 | scorer top-5 (strict) | 96% to 99% | 97.5% | yes |
 | generator top-5 (strict) | 90% to 95%, gap ≥ 3 | 92.2%, gap 5.3 | yes |
 | scorer hallucination | 0.0% | 0.0% | yes |

@@ -72,13 +72,15 @@ Run on an A100, seeds 1 to 3, 3 epochs each, evaluated once per seed on held-out
 
 | quantity | Arm R (ranking only) | expected for Arm J | observed for Arm J | met? |
 |---|---:|---|---:|---|
-| top-1, mean of 3 seeds | 62.6% | 64% to 67% | 64.0% (63.0 / 65.0 / 64.0) | yes, low end |
+| top-1, mean of 3 seeds | 62.5% | 64% to 67% | 64.0% (64.0 / 65.0 / 63.0) | yes, low end |
 | gap to generator, mean | −4.1 pt | within ±3 on at least six of nine pairings | −2.6 pt; nine of nine *inconclusive*, none decisive either way | partly: not decisively worse, not equivalent |
 | non-`Finish` top-1 | 56.6% | +2 to +5 | 58.7% (+2.1) | yes, low end |
 | never-label top-1 | 44.2% | +3 to +6 | 49.0% (+4.8; 51.4 / 51.4 / 44.4) | yes, though one seed did not move |
 | `Finish` recall | 78% | unchanged | 78% | yes |
 | hallucination | 0.0% | 0.0% | 0.0% | yes |
 | top-5 (strict) | 97.2% | unchanged or up | 97.5% | yes |
-| latency, laptop | 251 ms | unchanged | 256 ms (150 steps) | yes |
+| latency, laptop | 251 ms | unchanged | 247 ms (all 1,352 steps, `results/08-genrec-joint/latency_laptop_joint_s1/`; an earlier 150-step reading of 256 ms was not saved) | yes |
+
+Correction, 2026-09-18: the pre-registered text above quotes the ranking-only mean as 62.6%, which was the mean of the rounded seed values. From the exact hit counts (858, 843 and 835 of 1,352) it is 62.5%. The 4.1-point gap was already computed from exact values and is unchanged. The pre-registered text is left as written.
 
 The LM objective recovers about a third of the gap and most of the never-label deficit, which is the slice it was predicted to fix. The remaining 2 to 4 points sit on tools the model trained on. Arm P (Phase 1) and the likelihood reference bound were not run in this pass; they are listed as future expansions in the README.
