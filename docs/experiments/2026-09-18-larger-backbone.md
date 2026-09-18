@@ -4,13 +4,13 @@ Status: planned, pre-registered. Not yet run. Depends on nothing in Experiment A
 
 ## The question
 
-Does the scorer's accuracy deficit shrink when the backbone reads tool descriptions better? The span head represents each candidate by the hidden states over its one-line description. A 1.5B model reads short descriptions weakly, and the scorer's largest deficit is on tools it never saw as a training label (44.2% vs. 53.8%, a reading problem by construction). GenRec itself runs on a large foundation model; the 1.5B choice was a laptop constraint.
+Does the scorer's accuracy deficit shrink when the backbone reads tool descriptions better? The span head represents each candidate by the hidden states over its one-line description. A 1.5B model reads short descriptions weakly, and the scorer's largest deficit is on tools it never saw as a training label (44.2% vs. 53.8%, a reading problem by construction). GenRec's own ablation (post, "Data, Model, and Phase Contributions"; paper section 5.2) post-trained backbones from about 1B to about 10B parameters under a fixed budget and found that larger backbones consistently reach higher offline MRR, with similar data-scaling curves. The 1.5B choice here was a laptop constraint; 7B sits inside GenRec's tested range.
 
 ## Design
 
 **Backbone:** Qwen2.5-7B-Instruct in bf16 (about 15 GB of weights; fits LoRA training with gradient checkpointing on the 40 GB A100 the Colab sessions have provided). Same tokenizer family, so the prompt, truncation, and span offsets carry over. 14B in 4-bit is a possible second step but adds a quantization confound; it is not part of this plan.
 
-**Both systems get the same backbone.** Scorer: Tier 1 span cache and head, then Phase 2 LoRA (r=8, q/v, lr 2e-4, effective batch 16, 3 epochs), last-token pooling. Generator: LoRA SFT, answer-only loss, 3 epochs, same adapter config. Plus the prompted 7B generator zero-shot, for context only. If Experiment A's Phase 1 helps at 1.5B, both a Phase-2-only and a two-phase scorer are run at 7B; otherwise Phase 2 only.
+**Both systems get the same backbone.** Scorer: Tier 1 span cache and head, then Phase 2 LoRA (r=8, q/v, lr 2e-4, effective batch 16, 3 epochs), last-token pooling. Generator: LoRA SFT, answer-only loss, 3 epochs, same adapter config. Plus the prompted 7B generator zero-shot, for context only. The scorer arm at 7B uses whichever Experiment A objective won (joint Phase 2, or Phase 1 then joint); if Experiment A has not run, the ranking-only objective, clearly labelled as half of GenRec's recipe.
 
 **Seeds.** One seed each first. If the gap moves by more than 2 points in either direction, two more seeds each.
 

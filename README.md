@@ -104,12 +104,13 @@ Because only existing embeddings get scored, recommending a non-existent film is
 | For cold-start items, "include more detailed metadata" in the context | **Span head**: no table at all. Each candidate's vector is pooled from its own description line *inside the prompt*, so unseen tools get a representation for free |
 | Softmax over the catalog; reward-weighted ranking loss | Softmax over the catalog, masked to the task's candidate list; plain cross-entropy (no reward weighting) |
 | Prefill-only serving, one forward pass for the whole candidate set | Prefill-only: one pass, candidates scored from the same hidden states, no decoding |
-| Phase 1 domain adaptation, Phase 2 ranking fine-tuning of backbone + head | Tier 1: backbone frozen, head trained on cached vectors in a minute. Tier 2: LoRA on q/v projections fine-tuned jointly with the head |
+| Phase 1: adapt the LLM on domain corpora, no labels. Phase 2: post-train backbone + head + item embeddings jointly on conversations (verbalized context → actual engagement) with a ranking loss **plus a language-modeling loss over the verbalized inputs and outputs**, reward-weighted | No Phase 1. Tier 1: backbone frozen, head trained on cached vectors. Tier 2: LoRA on q/v fine-tuned jointly with the head, **ranking loss only**. The LM term is the piece the generator baseline got and the scorer did not; see `docs/experiments/2026-09-18-genrec-two-phase-training.md` |
 
-Two deliberate departures from GenRec:
+Two deliberate departures from GenRec, and one omission I only recognised after the results were in:
 
 - **No reward weighting.** ToolBench has no reward signal beyond "this is what the reference agent did", so every call counts the same.
 - **The span head.** It has no analogue in the post. It is my attempt at the cold-start problem, and it ended up being the best scorer.
+- **No language-modeling objective, no Phase 1 (the omission).** GenRec's Phase 2 loss is ranking *plus* next-token prediction over the verbalized conversation, and it starts from a domain-adapted backbone. ActionRank's Tier 2 is ranking only, from the stock backbone. The generator baseline was trained with exactly the next-token objective the scorer lacks, so the matched comparison in section 4.6 is between a full recipe and a half one. Closing that is the pre-registered Experiment A.
 
 ---
 
