@@ -65,3 +65,20 @@ The 1,352 steps have judged five models so far. This plan adds two arms and one 
 - `train_phase1.py`: LM-only LoRA on the label-masked verbalized trajectories plus one document per task listing its tools and descriptions. Saves an adapter under `checkpoints/phase1/`. `tier2.init_adapter` (new, optional) makes Tier 1 caching and Tier 2 start from it.
 - Configs under `configs/genrec/`: `joint_s{1,2,3}.yaml`, `phase1.yaml`, `phase1_joint_s{1,2,3}.yaml`. Pipelines `08_joint_seeds.py`, `08b_phase1_then_joint.py`.
 - Tests: LM labels align with the appended answer; `lm_weight: 0` reproduces the current loss exactly on the fixture; Phase 1 masking hides every label token; adapter init path is honoured.
+
+## Outcome, Arm J (added 2026-09-18, after the run)
+
+Run on an A100, seeds 1 to 3, 3 epochs each, evaluated once per seed on held-out steps 503 to 1,854. Results in `results/08-genrec-joint/`.
+
+| quantity | Arm R (ranking only) | expected for Arm J | observed for Arm J | met? |
+|---|---:|---|---:|---|
+| top-1, mean of 3 seeds | 62.6% | 64% to 67% | 64.0% (63.0 / 65.0 / 64.0) | yes, low end |
+| gap to generator, mean | −4.1 pt | within ±3 on at least six of nine pairings | −2.6 pt; nine of nine *inconclusive*, none decisive either way | partly: not decisively worse, not equivalent |
+| non-`Finish` top-1 | 56.6% | +2 to +5 | 58.7% (+2.1) | yes, low end |
+| never-label top-1 | 44.2% | +3 to +6 | 49.0% (+4.8; 51.4 / 51.4 / 44.4) | yes, though one seed did not move |
+| `Finish` recall | 78% | unchanged | 78% | yes |
+| hallucination | 0.0% | 0.0% | 0.0% | yes |
+| top-5 (strict) | 97.2% | unchanged or up | 97.5% | yes |
+| latency, laptop | 251 ms | unchanged | 256 ms (150 steps) | yes |
+
+The LM objective recovers about a third of the gap and most of the never-label deficit, which is the slice it was predicted to fix. The remaining 2 to 4 points sit on tools the model trained on. Arm P (Phase 1) and the likelihood reference bound were not run in this pass; they are listed as future expansions in the README.

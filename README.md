@@ -6,15 +6,16 @@ Every agent framework picks its next tool the same way: the language model *writ
 
 Netflix's recommendation team recently argued, in [GenRec](https://netflixtechblog.com/genrec-towards-llm-native-recommendation-at-netflix-f20be6f643e3), that when your choices come from a fixed catalog you shouldn't generate at all: run the LLM once over the context, then score every catalog item from that single pass. I wanted to know whether the same trick works when the "catalog" is an agent's toolbox.
 
-**The short answer**, on ToolBench with a 1.5B-parameter Qwen backbone, with matched fine-tuning, three training seeds per system, evaluated on 1,352 held-out steps that no training run ever looked at:
+**The short answer**, on ToolBench with a 1.5B-parameter Qwen backbone, three training seeds per system, evaluated on 1,352 held-out steps that no training run ever looked at:
 
-- **The generator is more accurate.** Generating the tool name gets **66.6%** top-1 on average against **62.6%** for scoring the tool list, a gap of about 4 points. On the steps where an actual tool is chosen (not the decision to stop), the gap is 5 to 6 points on every seed.
+- **The generator is still more accurate, by less than it first looked.** Trained with GenRec's full Phase 2 objective (ranking loss plus a language-modeling loss), the scorer reaches **64.0%** top-1 against the generator's **66.6%**, a gap of about 2.6 points. With the ranking loss alone it was 62.6%, a gap of 4.1. On the steps where an actual tool is chosen, the gap is about 4 points.
+- **The missing loss term explains part of the gap, and it helps where GenRec says it should.** On tools that were never a training label the scorer went from 44% to 49% (51% on two of three seeds); the generator is at 54%. On tools it trained on, the LM term barely moved it.
 - **Never an invented tool.** The scorer cannot pick a tool that isn't offered (**0%** on every seed); the fine-tuned generator names a tool that doesn't exist about **0.9%** of the time.
-- **A far better ranking.** The right tool is in the scorer's top five **97%** of the time, vs. **91%** for the generator.
-- **Less than half the latency.** **251 ms vs. 632 ms** per decision on the laptop, because there is one prefill and no decoding.
-- **More stable.** The scorer's three seeds land within 1.7 points of each other. The generator's span 4.9 points, almost entirely from how reliably each seed learns to stop.
+- **A far better ranking.** The right tool is in the scorer's top five **97 to 98%** of the time, vs. **91%** for the generator.
+- **Less than half the latency.** **256 ms vs. 632 ms** per decision on the laptop, because there is one prefill and no decoding.
+- **More stable.** Scorer seeds land within 2 points of each other; the generator's span 5, almost entirely from how reliably each seed learns to stop.
 - **The detour.** The scorer's fine-tuning did nothing until I changed one detail of how the prompt is pooled.
-- **The correction.** My first write-up called top-1 a tie (66.6% vs. 66.0%). That was on a 500-step development set that both training runs had been monitored against. A pre-registered rerun on untouched steps, then two more seeds per system, replaced it with the numbers above. Section 4.6 has the whole story.
+- **The correction.** My first write-up called top-1 a tie (66.6% vs. 66.0%). That was on a 500-step development set both training runs had been monitored against. A pre-registered rerun on untouched steps, two more seeds per system, and then a re-read of GenRec's recipe replaced it with the numbers above. Sections 4.6 and 4.7 have the story.
 
 Both systems choose a tool *name*; neither generates arguments.
 
@@ -53,14 +54,15 @@ The rest of this report is how I got each of those numbers and what I think they
 - **Generation** is what agent frameworks do today: the LLM writes the tool's name token by token, function-calling style. *Prompted* is the stock model with a chat prompt and no training. *Fine-tuned* adds a LoRA adapter trained on ToolBench to emit the right name.
 - **ActionRank** is the GenRec idea applied to tools: run the LLM over the prompt once, then score every candidate tool from that single pass, with no decoding. The score for each tool comes from the hidden states over that tool's own description line in the prompt (the "span head"). *Frozen backbone* means the LLM is untouched and only the small scoring head is trained, which takes a minute on cached vectors. *Fine-tuned* adds a LoRA adapter with the same configuration the generator gets and trains it jointly with the head, starting from the frozen-backbone head.
 
-**The results**, both systems fine-tuned with the same LoRA configuration for three epochs, three seeds each, on the 1,352 unmonitored held-out steps. Mean over seeds, with the seed range in brackets. Latency is from seed 1 on the laptop; seed replicates were evaluated on an A100 and are not timed.
+**The results**, every system fine-tuned with the same LoRA configuration for three epochs, three seeds each, on the 1,352 unmonitored held-out steps. Mean over seeds, with the seed range in brackets. Latency is measured on the laptop; seed replicates were evaluated on an A100 and are not timed.
 
-| system | top-1 | top-1, tool-choice steps only | top-5 | hallucination rate | latency / decision |
-|---|---:|---:|---:|---:|---:|
-| Generation, fine-tuned | **66.6%** [63.4, 68.3] | **62.7%** [59.7, 64.5] | 90.7% [89.5, 92.2] | 0.9% [0.9, 1.0] | 632 ms |
-| **ActionRank**, fine-tuned | 62.6% [61.8, 63.5] | 56.6% [54.5, 58.3] | **97.2%** [97.0, 97.5] | **0.0%** [0.0, 0.0] | **251 ms** |
+| system | training objective | top-1 | top-1, tool-choice steps only | top-5 | hallucination rate | latency / decision |
+|---|---|---:|---:|---:|---:|---:|
+| Generation, fine-tuned | next-token (answer only) | **66.6%** [63.4, 68.3] | **62.7%** [59.7, 64.5] | 90.7% [89.5, 92.2] | 0.9% [0.9, 1.0] | 632 ms |
+| ActionRank, fine-tuned | ranking only | 62.6% [61.8, 63.5] | 56.6% [54.5, 58.3] | 97.2% [97.0, 97.5] | **0.0%** | 251 ms |
+| **ActionRank, fine-tuned, GenRec's full objective** | ranking + language modeling | 64.0% [63.0, 65.0] | 58.7% [55.7, 60.6] | **97.5%** [97.0, 98.0] | **0.0%** | **256 ms** |
 
-The generator is more accurate by about 4 points overall and 6 points on steps where a tool (not `Finish`) is the answer. The scorer never picks an off-list tool, ranks the alternatives far better, decides in less than half the time, and varies less across seeds. That is the trade.
+With GenRec's full Phase 2 objective the generator is more accurate by about 2.6 points overall and 4 points on steps where a tool (not `Finish`) is the answer; with the ranking loss alone the gaps were 4.1 and 6. Under the pre-registered rule (trajectory-clustered 95% CI inside ±3 points), no seed pairing of the full-objective scorer against the generator is decisive in either direction. The scorer never picks an off-list tool, ranks the alternatives far better, decides in less than half the time, and varies less across seeds. That is the trade.
 
 **Development history.** The first version of this report used the 500-step development set below and called top-1 a tie. Both training scripts had logged accuracy on a prefix of those steps, and the scorer's edge there came from `Finish` recall that did not carry over. Section 4.6 has the rerun and the seeds.
 
@@ -104,13 +106,13 @@ Because only existing embeddings get scored, recommending a non-existent film is
 | For cold-start items, "include more detailed metadata" in the context | **Span head**: no table at all. Each candidate's vector is pooled from its own description line *inside the prompt*, so unseen tools get a representation for free |
 | Softmax over the catalog; reward-weighted ranking loss | Softmax over the catalog, masked to the task's candidate list; plain cross-entropy (no reward weighting) |
 | Prefill-only serving, one forward pass for the whole candidate set | Prefill-only: one pass, candidates scored from the same hidden states, no decoding |
-| Phase 1: adapt the LLM on domain corpora, no labels. Phase 2: post-train backbone + head + item embeddings jointly on conversations (verbalized context → actual engagement) with a ranking loss **plus a language-modeling loss over the verbalized inputs and outputs**, reward-weighted | No Phase 1. Tier 1: backbone frozen, head trained on cached vectors. Tier 2: LoRA on q/v fine-tuned jointly with the head, **ranking loss only**. The LM term is the piece the generator baseline got and the scorer did not; see `docs/experiments/2026-09-18-genrec-two-phase-training.md` |
+| Phase 1: adapt the LLM on domain corpora, no labels. Phase 2: post-train backbone + head + item embeddings jointly on conversations (verbalized context → actual engagement) with a ranking loss **plus a language-modeling loss over the verbalized inputs and outputs**, reward-weighted | No Phase 1. Tier 1: backbone frozen, head trained on cached vectors. Tier 2: LoRA on q/v fine-tuned jointly with the head. Sections 4.4 to 4.6 use the **ranking loss only**; section 4.7 adds GenRec's LM loss over the verbalized prompt and answer, which is the objective the final numbers use |
 
 Two deliberate departures from GenRec, and one omission I only recognised after the results were in:
 
 - **No reward weighting.** ToolBench has no reward signal beyond "this is what the reference agent did", so every call counts the same.
 - **The span head.** It has no analogue in the post. It is my attempt at the cold-start problem, and it ended up being the best scorer.
-- **No language-modeling objective, no Phase 1 (the omission).** GenRec's Phase 2 loss is ranking *plus* next-token prediction over the verbalized conversation, and it starts from a domain-adapted backbone. ActionRank's Tier 2 is ranking only, from the stock backbone. The generator baseline was trained with exactly the next-token objective the scorer lacks, so the matched comparison in section 4.6 is between a full recipe and a half one. Closing that is the pre-registered Experiment A.
+- **No Phase 1, and at first no language-modeling objective (the omission).** GenRec's Phase 2 loss is ranking *plus* next-token prediction over the verbalized conversation, and it starts from a domain-adapted backbone. Until section 4.7, ActionRank's Tier 2 was ranking only, from the stock backbone, while the generator baseline was trained with exactly the next-token objective the scorer lacked. Section 4.7 adds the LM term (pre-registered as Experiment A, Arm J) and it accounts for about a third of the gap. Phase 1 remains undone.
 
 ---
 
@@ -253,17 +255,36 @@ Six of nine pairings favour the generator with intervals clear of zero; the thre
 
 Per-seed tables are in `results/06-unmonitored-holdout/` and `results/07-seeds/`; `scripts/paired_test.py` reproduces the pairings.
 
+### 4.7 Giving the scorer the rest of GenRec's recipe
+
+Re-reading the GenRec post after the seeds, I found the departure I had not declared. GenRec's Phase 2 loss is the catalog-aware ranking objective *plus* "a language modeling objective over the verbalized inputs and outputs", trained jointly; the training data are conversations whose assistant turn is the actual engagement, and "during Phase-2 training, the LLM learns how assistant messages depend on user messages". ActionRank's Tier 2 had only the ranking loss. The generator baseline had only the LM loss. So the matched comparison in 4.6 was a half-recipe scorer against a generator that got the half the scorer was missing.
+
+The pre-registered fix (`docs/experiments/2026-09-18-genrec-two-phase-training.md`, Arm J): the same Tier 2 run, with the loss changed to ranking cross-entropy plus next-token cross-entropy over the verbalized prompt followed by `Next tool: <label>` and EOS, from one forward pass, weight 1, fixed in advance. The pooled query and the span vectors are read from prompt positions only, so the answer cannot leak into the score (tested: the catalog logits are identical with and without it). Inference is untouched. Three seeds, evaluated once each on the same 1,352 steps.
+
+| top-1 on the 1,352 unmonitored steps | seed 1 | seed 2 | seed 3 | mean | never-label tools | non-`Finish` | `Finish` recall |
+|---|---:|---:|---:|---:|---|---|---|
+| ActionRank, ranking loss only (4.6) | 63.5% | 62.4% | 61.8% | 62.6% | 46.8 / 42.2 / 43.5% | 58.3 / 54.5 / 57.1% | 77 / 83 / 74% |
+| ActionRank, ranking + LM loss | 64.0% | 65.0% | 63.0% | 64.0% | 51.4 / 51.4 / 44.4% | 59.7 / 60.6 / 55.7% | 75 / 77 / 82% |
+| generation, fine-tuned 3 epochs | 68.3% | 68.2% | 63.4% | 66.6% | 55.0 / 51.1 / 55.3% | 64.5 / 59.7 / 64.0% | 78 / 91 / 62% |
+
+- **The LM term helps, and it helps where GenRec says it should.** Mean top-1 +1.4 points; on tools that were never a training label, two seeds gained 7 points (44 to 51%) and one did not move. That slice is the reading-the-description problem the LM objective targets, and on it the full-objective scorer is now within 3 points of the generator's mean instead of 10. On tools the model trained on, the gain is under a point.
+- **The gap narrows from 4.1 to 2.6 points and stops being decisive.** All nine pairings of full-objective scorer seeds against generator seeds are *inconclusive* under the ±3 margin: six exclude zero in the generator's favour (worst −5.3, best −3.2), three straddle it (+1.6 to −0.4 against generator seed 3). Where the ranking-only scorer lost four of nine pairings outright, the full-objective scorer loses none outright and wins none.
+- **The structural results are unchanged**: 0.0% hallucination on every seed, top-5 97.0 to 98.0%, and the same inference cost (256 ms on the laptop, one prefill).
+- **What is left** is a 2 to 4 point deficit concentrated on tools the model trained on and on non-`Finish` steps. The LM loss does not touch that; GenRec's Phase 1, more data, or a larger backbone might. Those are future work.
+
+Results are in `results/08-genrec-joint/`. The pre-registration document records the expectations (Arm J was expected to land within the margin on at least six of nine pairings; it landed inconclusive on nine of nine, with the never-label gain as predicted).
+
 ---
 
 ## 5. What I take from this
 
-**Scoring is a trade, not a free win.** GenRec's structural promises transfer exactly: a scorer cannot pick an off-catalog tool, it ranks every candidate from one forward pass, and it decides in less than half the time. What did not transfer is accuracy parity. With matched fine-tuning and three seeds, generating the name is about 4 points more accurate overall and about 6 points more accurate on steps where a tool (not `Finish`) is the answer. Whether that is a good trade depends on the agent: one that retries from a ranking, or that cannot afford an invalid call, gets a lot for 4 points; one that executes its first choice and can validate names cheaply gets less.
+**Scoring is a trade, not a free win.** GenRec's structural promises transfer exactly: a scorer cannot pick an off-catalog tool, it ranks every candidate from one forward pass, and it decides in less than half the time. What did not fully transfer is accuracy parity. With GenRec's full Phase 2 objective and three seeds, generating the name is still about 2.6 points more accurate overall and about 4 on steps where a tool (not `Finish`) is the answer, though no seed pairing is decisive under the pre-registered margin. Whether that is a good trade depends on the agent: one that retries from a ranking, or that cannot afford an invalid call, gets a lot for 4 points; one that executes its first choice and can validate names cheaply gets less.
 
-**Evaluate on data nobody looked at, then replicate.** The tie I first reported was real on the development set and gone on untouched steps, because a `Finish`-recall edge specific to those 500 steps did not generalise. Seeds then showed that the generator's own number swings by 5 points depending on how well a run learns to stop. Neither fact was visible from one run on one slice. The pre-registered plan and the clustered intervals are what let me state the corrected result with some confidence.
+**Evaluate on data nobody looked at, replicate, then re-read the paper.** The tie I first reported was real on the development set and gone on untouched steps, because a `Finish`-recall edge specific to those 500 steps did not generalise. Seeds then showed that the generator's own number swings by 5 points depending on how well a run learns to stop. And going back to GenRec's text line by line turned up a loss term I had dropped, which recovered a third of the remaining gap. None of that was visible from one run on one slice.
 
-**The pooling position is not a detail.** GenRec says "a pooling position" and moves on. In my setup it was the difference between a scorer that could not be fine-tuned at all and one within 4 points of the generator. My reading, which the one controlled swap supports but does not prove: mean pooling averages away whatever a low-rank adapter changes, while the last token is where a decoder-only model concentrates its decision, which is exactly why generation reads from there.
+**The pooling position is not a detail.** GenRec says "a pooling position" and moves on. In my setup it was the difference between a scorer that could not be fine-tuned at all and one within 3 points of the generator. My reading, which the one controlled swap supports but does not prove: mean pooling averages away whatever a low-rank adapter changes, while the last token is where a decoder-only model concentrates its decision, which is exactly why generation reads from there.
 
-**Reading descriptions beats remembering them.** The table head, GenRec's per-item embedding, is at chance on tools with no training label, a quarter of the test set. Building each candidate's vector from its description inside the prompt (the span head) is what made the scorer competitive, and it is the part of the design closest to GenRec's own cold-start advice. The scorer's largest remaining deficit is still that slice: 8 to 10 points behind the generator on tools that were never a training label, on every seed.
+**Reading descriptions beats remembering them.** The table head, GenRec's per-item embedding, is at chance on tools with no training label, a quarter of the test set. Building each candidate's vector from its description inside the prompt (the span head) is what made the scorer competitive, and it is the part of the design closest to GenRec's own cold-start advice. With the ranking loss alone the scorer was 8 to 10 points behind the generator on tools that were never a training label; GenRec's LM objective closed most of that (section 4.7). The remaining deficit sits on tools the model trained on.
 
 **Stopping is the unstable part.** The prompted generator never stops; fine-tuned generator seeds stop correctly anywhere from 62% to 91% of the time; the scorer's `Finish` recall also moves 10 points across seeds. Any tool-selection comparison should report `Finish` recall separately, because it can swing the headline number by 5 points without the tool-choice accuracy changing at all.
 
@@ -283,14 +304,18 @@ Per-seed tables are in `results/06-unmonitored-holdout/` and `results/07-seeds/`
 
 ---
 
-## 7. What I'd do next
+## 7. Future expansions
 
-1. **Attack the two places the scorer loses**: a description-side objective for tools it has never been trained on (8 to 10 points behind), and a separate `Finish` head or calibration for the stop decision, which swings by 10 points across seeds.
-2. **Score the full catalog, not the shortlist.** Drop the per-task candidate list and rank all 6,372 tools. With about 6 candidates, random guessing already gets 83% top-5, so the ranking metric is near its ceiling. Full-catalog retrieval is GenRec's real setting, and it is where a scorer that ranks everything in one pass should separate from a generator that spells one name. I'd run this before anything below.
-3. **Move to ToolBench G3** (multi-tool tasks, longer histories). That is where the context pooling gets stressed and the "large catalog" motivation actually gets tested.
-4. **A larger backbone.** LoRA on a 4-bit 20B-class model fits one A100 for this data volume. Measure latency for both systems on the same GPU rather than the laptop. The question to answer is whether the unseen-tool gap closes once the backbone can read a tool description properly.
-5. **A predeclared train/dev/test split with retraining**, so the final numbers come from data that no stage of development touched. Section 4.6 is confirmatory, not independent.
-6. **A constrained-decoding generator baseline**, so its hallucination rate is also zero and the comparison isolates ranking quality and latency.
+This first pass stops here: GenRec's Phase 2 recipe replicated on tool selection at 1.5B, compared against a matched generator on a clean held-out set with seeds and intervals. Each item below is something GenRec does, or calls out, that this project has not, with a note on feasibility.
+
+1. **Phase 1 domain adaptation.** Continue pretraining the backbone with the next-token loss on ToolBench text with no labels (every tool description, plus the trajectories with the answers masked), then run Tier 2 on top. GenRec credits this with a 10 to 20% relative gain. Pre-registered as Arm P in `docs/experiments/2026-09-18-genrec-two-phase-training.md`; about 2 A100-hours; the most likely next win on never-label tools.
+2. **More training data.** GenRec's headline ablation is that ranking quality improves monotonically with Phase 2 data. This project used 10,568 steps from 3,394 trajectories; ToolBench's full G1 training set is several times larger and sits unused in the repo. Keep the held-out split fixed, slice with the same verbalizer, retrain both systems. Cheap, and the 6-epoch overfitting in 4.5 says the models are data-limited.
+3. **A larger backbone.** GenRec post-trained 1B to 10B backbones and found larger consistently better. Qwen2.5-7B fits LoRA training on a 40 GB A100; pre-registered in `docs/experiments/2026-09-18-larger-backbone.md`, about 6 A100-hours for one seed of everything. On hold.
+4. **Score the full catalog, not the shortlist.** GenRec's real setting. The span head cannot do it (6,372 descriptions do not fit in a prompt); the table head can. A real design question, about a day of work.
+5. **ToolBench G3** (multi-tool tasks, longer histories), where the context pooling gets stressed.
+6. **A constrained-decoding generator baseline**, so its hallucination rate is also zero and the comparison isolates ranking quality and latency. Not GenRec, but the fairest generative comparison.
+7. **A predeclared train/dev/test split with retraining**, so the final numbers come from data no stage of development touched. Section 4.6 is confirmatory, not independent.
+8. **Reward weighting** cannot be done here: ToolBench has no engagement signal, and filtering to successful trajectories already makes every example's weight 1.
 
 ---
 
@@ -333,6 +358,7 @@ Each experiment stage has its own config, Colab pipeline and results folder, num
 | fine-tuned generator, 3 epochs (matched budget) | 4.4–4.5 | `configs/generator_3ep.yaml` | `colab/pipelines/05_generator_3ep.py` | `results/05-generator-lora-3ep/` |
 | both final checkpoints on held-out steps 503–1854 (pre-registered, laptop) | 4.6 | `configs/unmonitored_holdout.yaml` | local, `docs/experiments/2026-09-16-unmonitored-holdout-rerun.md` | `results/06-unmonitored-holdout/` |
 | seed replicates 2 and 3 of both final systems, evaluated on the same 1,352 steps | 4.6 | `configs/seeds/*.yaml` | `colab/pipelines/07_seeds_span.py`, `07_seeds_generator.py` | `results/07-seeds/` |
+| span scorer with GenRec's joint ranking + LM objective, seeds 1 to 3, same 1,352 steps | 4.7 | `configs/genrec/joint_s*.yaml` | `colab/pipelines/08_joint_seeds.py` | `results/08-genrec-joint/` |
 
 ---
 
